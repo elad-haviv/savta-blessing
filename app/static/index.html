@@ -127,6 +127,9 @@
       <div><label>אודיו מאושר</label><select id="vaudio"></select></div>
       <div><label>מודל וידאו</label><select id="vidmodel"></select></div>
     </div>
+    <label>פיצול לקטעים: אורך מרבי לקטע בשניות (0 = בלי פיצול)</label>
+    <input type="number" id="vsplit" min="0" max="120" step="1" value="0">
+    <div class="status">לברכה ארוכה במודל עם מגבלת אורך: האודיו נחתך בהפסקות, כל קטע מתחיל מהפריים האחרון של הקודם, והכל מחובר לסרטון אחד.</div>
     <label>הנחיית תנועה (אופציונלי, באנגלית עובד הכי טוב)</label>
     <input type="text" id="vprompt" placeholder="warm smile, slight head movements, looks at camera">
     <div class="warn hidden" id="nopub">לא הוגדר PUBLIC_BASE_URL בשרת: התמונה והאודיו יישלחו ל-OpenRouter כ-data URI. אם הפקת הווידאו נכשלת, הגדר את כתובת האפליקציה.</div>
@@ -446,15 +449,11 @@ async function mediaUrl(name, blobForData) {
   return toDataUri(blobForData || await fetchBlob(fileUrl(name)));
 }
 
-async function makeVideo(model, frame, audio, prompt, item) {
-  const ext = audio.blob.type.includes("wav") ? ".wav" : ".mp3";
-  const fd = new FormData(); fd.append("file", audio.blob, "blessing" + ext);
-  const staged = await api(`/api/jobs/${S.job.id}/stage`, { method: "POST", body: fd });
-  const [imgUrl, audUrl] = await Promise.all([mediaUrl(frame), mediaUrl(staged.name, audio.blob)]);
+async function genClip(model, imgUrl, audUrl, prompt, seconds, item) {
   const payload = { model, input_references: [{ type: "image_url", image_url: { url: imgUrl } }, { type: "audio_url", audio_url: { url: audUrl } }] };
   if (prompt) payload.prompt = prompt;
   if (!model.startsWith("heygen/")) {
-    payload.duration = Math.max(1, Math.ceil(audio.seconds || 5));
+    payload.duration = Math.max(1, Math.ceil(seconds || 5));
     if (!prompt) payload.prompt = "An elderly woman speaks warmly to the camera with natural lip-sync, gentle head movement and a soft smile.";
   }
   const submit = p => orFetch("/videos", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(p) }).then(r => r.json());
@@ -474,12 +473,48 @@ async function makeVideo(model, frame, audio, prompt, item) {
     try { cur = await (await orFetch(poll)).json(); status = cur.status || status; item.provider_status = status; renderVideos(); } catch (e) { if (/401|402/.test(e.message)) throw e; }
   }
   if (status !== "completed") throw new Error(`הפקת הווידאו נכשלה (${status}): ${cur.error || ""}`);
-  item.cost = cur.usage?.cost;
-  if (cur.urls?.length) return { href: cur.urls[0] };
-  if (cur.unsigned_urls?.length) { const blob = await (await orFetch(cur.unsigned_urls[0])).blob(); return { href: URL.createObjectURL(blob) }; }
+  if (cur.usage?.cost != null) item.cost = (item.cost || 0) + cur.usage.cost;
+  if (cur.urls?.length) return { url: cur.urls[0] };
+  if (cur.unsigned_urls?.length) return { blob: await (await orFetch(cur.unsigned_urls[0])).blob() };
   throw new Error("הווידאו הושלם אבל לא התקבל קישור להורדה");
 }
 
+async function makeVideo(model, frame, audio, prompt, item) {
+  const ext = audio.blob.type.includes("wav") ? ".wav" : ".mp3";
+  const fd = new FormData(); fd.append("file", audio.blob, "blessing" + ext);
+  const staged = await api(`/api/jobs/${S.job.id}/stage`, { method: "POST", body: fd });
+  const maxLen = +$("vsplit").value || 0;
+  if (!(maxLen >= 4) || (audio.seconds || 0) <= maxLen + 0.5) {
+    const [imgUrl, audUrl] = await Promise.all([mediaUrl(frame), mediaUrl(staged.name, audio.blob)]);
+    const r = await genClip(model, imgUrl, audUrl, prompt, audio.seconds, item);
+    return { href: r.url || URL.createObjectURL(r.blob) };
+  }
+  // Long blessing on a model with a clip-length limit: cut the audio at pauses, generate clip by clip,
+  // start every clip from the last frame of the previous one, then join everything on the server.
+  const { chunks } = await post(`/api/jobs/${S.job.id}/split`, { name: staged.name, max_len: maxLen });
+  const parts = []; let cur = frame;
+  for (let i = 0; i < chunks.length; i++) {
+    item.progress = `קטע ${i + 1} מתוך ${chunks.length}`; item.provider_status = ""; renderVideos();
+    let part, lastErr;
+    for (let attempt = 0; attempt < 2 && !part; attempt++) {
+      try {
+        const [imgUrl, audUrl] = await Promise.all([mediaUrl(cur), mediaUrl(chunks[i].name)]);
+        const r = await genClip(model, imgUrl, audUrl, prompt, chunks[i].seconds, item);
+        const pf = new FormData(); pf.append("seconds", chunks[i].seconds);
+        if (r.url) pf.append("url", r.url); else pf.append("file", r.blob, "part.mp4");
+        part = await api(`/api/jobs/${S.job.id}/part`, { method: "POST", body: pf });
+      } catch (e) { lastErr = e; if (/401|402/.test(e.message)) break; }
+    }
+    if (!part) throw new Error(`קטע ${i + 1} מתוך ${chunks.length} נכשל: ${lastErr.message}`);
+    parts.push({ name: part.name, seconds: chunks[i].seconds }); cur = part.frame;
+  }
+  item.progress = "מחבר את הקטעים"; item.provider_status = ""; renderVideos();
+  const fin = await post(`/api/jobs/${S.job.id}/stitch`, { parts, audio: staged.name });
+  item.progress = "";
+  return { href: fileUrl(fin.name) };
+}
+
+$("vidmodel").onchange = () => { $("vsplit").value = $("vidmodel").value.includes("seedance") ? 14 : 0; };
 $("mk-video").onclick = async () => {
   $("videoerr").textContent = "";
   const frame = document.querySelector("input[name=frame]:checked")?.value;
@@ -496,7 +531,7 @@ $("mk-video").onclick = async () => {
 function renderVideos() {
   $("videos").innerHTML = S.videos.slice().reverse().map(v => `<div class="item">
     <span class="tag">${esc(v.model)}</span>
-    ${v.status === "working" ? `<div class="status">מפיק סרטון (1-5 דקות)... ${esc(v.provider_status || "")}</div>` : v.status === "error" ? `<div class="error">${esc(v.error)}</div>` : `<video controls src="${esc(v.href)}"></video><div class="status"><a href="${esc(v.href)}" target="_blank" rel="noopener noreferrer" download="blessing.mp4">הורד MP4</a>${v.cost != null ? ` · עלות $${(+v.cost).toFixed(2)}` : ""}</div>`}
+    ${v.status === "working" ? `<div class="status">מפיק סרטון (1-5 דקות${v.progress ? " לכל קטע" : ""})... ${esc(v.progress || "")} ${esc(v.provider_status || "")}</div>` : v.status === "error" ? `<div class="error">${esc(v.error)}</div>` : `<video controls src="${esc(v.href)}"></video><div class="status"><a href="${esc(v.href)}" target="_blank" rel="noopener noreferrer" download="blessing.mp4">הורד MP4</a>${v.cost != null ? ` · עלות $${(+v.cost).toFixed(2)}` : ""}</div>`}
   </div>`).join("");
 }
 

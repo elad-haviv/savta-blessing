@@ -3,9 +3,15 @@ all OpenRouter calls happen in the browser (BYOK)."""
 import base64
 import json
 import math
+import ipaddress
 import os
+import re
+import socket
 import subprocess
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 
@@ -69,6 +75,111 @@ def normalize_image(src: Path, out: Path, max_side: int = 1920) -> Path:
          "-q:v", "2", str(out)])
     if not out.exists():
         raise PipelineError("לא הצלחתי לקרוא את התמונה")
+    return out
+
+
+# ---------------------------------------------------------------- long videos: split, chain, stitch
+
+def split_audio(src: Path, outdir: Path, max_len: float, prefix: str, min_len: float = 4.0) -> list[dict]:
+    """Cut audio into chunks of at most max_len seconds, cutting in the middle of pauses when possible."""
+    total = probe_duration(src)
+    p = subprocess.run(["ffmpeg", "-i", str(src), "-af", "silencedetect=noise=-35dB:d=0.18", "-f", "null", "-"],
+                       capture_output=True, text=True, timeout=600)
+    starts = [float(x) for x in re.findall(r"silence_start: (-?[\d.]+)", p.stderr)]
+    ends = [float(x) for x in re.findall(r"silence_end: (-?[\d.]+)", p.stderr)]
+    mids = [(a + b) / 2 for a, b in zip(starts, ends)]
+    cuts, t = [], 0.0
+    while total - t > max_len:
+        hi = min(t + max_len, total - min_len)
+        cand = [m for m in mids if t + min_len <= m <= hi]
+        cut = max(cand) if cand else hi
+        if cut - t < min_len:
+            cut = min(t + max_len, total)
+        cuts.append(cut)
+        t = cut
+    bounds = [0.0] + cuts + [total]
+    chunks = []
+    for i, (a, b) in enumerate(zip(bounds, bounds[1:])):
+        name = f"{prefix}_{i:02d}.mp3"
+        run(["ffmpeg", "-y", "-i", str(src), "-ss", f"{a:.3f}", "-t", f"{b - a:.3f}", "-ac", "1",
+             "-ar", "44100", "-b:a", "128k", str(outdir / name)])
+        chunks.append({"name": name, "seconds": round(b - a, 3)})
+    return chunks
+
+
+def _public_host(host: str) -> bool:
+    try:
+        infos = socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)
+    except OSError:
+        return False
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if not ip.is_global:
+            return False
+    return bool(infos)
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):
+        return None
+
+
+def fetch_public_url(url: str, dest: Path, max_bytes: int = 300 * 1024 * 1024) -> Path:
+    """Download a finished clip from a public https link. Refuses private addresses (no SSRF)."""
+    opener = urllib.request.build_opener(_NoRedirect)
+    for _ in range(4):
+        u = urllib.parse.urlsplit(url)
+        if u.scheme != "https" or not u.hostname or not _public_host(u.hostname):
+            raise PipelineError("קישור הווידאו לא תקין")
+        try:
+            with opener.open(urllib.request.Request(url, headers={"User-Agent": "savta-blessing"}), timeout=120) as r:
+                size = 0
+                with dest.open("wb") as fh:
+                    while chunk := r.read(1024 * 1024):
+                        size += len(chunk)
+                        if size > max_bytes:
+                            raise PipelineError("קובץ הווידאו גדול מדי")
+                        fh.write(chunk)
+                return dest
+        except urllib.error.HTTPError as e:
+            loc = e.headers.get("Location") if e.code in (301, 302, 303, 307, 308) else None
+            if not loc:
+                raise PipelineError(f"הורדת הקליפ נכשלה ({e.code})")
+            url = urllib.parse.urljoin(url, loc)
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            raise PipelineError(f"הורדת הקליפ נכשלה ({e})")
+    raise PipelineError("יותר מדי הפניות בקישור הווידאו")
+
+
+def video_info(path: Path) -> tuple[int, int, float]:
+    out = run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
+               "-of", "csv=p=0", str(path)]).strip().split(",")
+    try:
+        return int(out[0]), int(out[1]), probe_duration(path)
+    except (ValueError, IndexError):
+        raise PipelineError("הקליפ שהתקבל אינו קובץ וידאו תקין")
+
+
+def chain_frame(part: Path, seconds: float, out: Path) -> Path:
+    """The frame the next clip should start from: where this clip's audio ends (or its last frame)."""
+    _, _, dur = video_info(part)
+    return extract_frame_at(part, max(0.0, min(seconds, dur) - 0.07), out)
+
+
+def stitch(parts: list[tuple[Path, float]], audio: Path, out: Path) -> Path:
+    """Join clips, each fitted to exactly its audio chunk's length, and lay the original audio on top."""
+    w, h, _ = video_info(parts[0][0])
+    w, h = w - w % 2, h - h % 2
+    cmd, fc = ["ffmpeg", "-y"], ""
+    for i, (p, sec) in enumerate(parts):
+        cmd += ["-i", str(p)]
+        fc += (f"[{i}:v]fps=30,scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,"
+               f"setsar=1,tpad=stop_mode=clone:stop_duration=30,trim=0:{sec:.3f},setpts=PTS-STARTPTS[v{i}];")
+    fc += "".join(f"[v{i}]" for i in range(len(parts))) + f"concat=n={len(parts)}:v=1:a=0[v]"
+    cmd += ["-i", str(audio), "-filter_complex", fc, "-map", "[v]", "-map", f"{len(parts)}:a",
+            "-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", str(out)]
+    run(cmd, timeout=1800)
     return out
 
 

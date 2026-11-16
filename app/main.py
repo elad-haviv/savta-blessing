@@ -360,6 +360,75 @@ async def stage_audio(job_id: str, file: UploadFile = File(...)):
     return {"name": name}
 
 
+class SplitReq(BaseModel):
+    name: str
+    max_len: float = Field(ge=4, le=120)
+
+
+@app.post("/api/jobs/{job_id}/split", dependencies=[Depends(require_auth)])
+def split(job_id: str, req: SplitReq):
+    """Cut a staged blessing audio into short chunks (at pauses) for models with a clip-length limit."""
+    d = jobdir(job_id)
+    if not SAFE_NAME.match(req.name) or not req.name.startswith("stage_") or not (d / req.name).is_file():
+        raise HTTPException(404)
+    try:
+        return {"chunks": pl.split_audio(d / req.name, d, req.max_len, f"stage_{uuid.uuid4().hex[:8]}")}
+    except pl.PipelineError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/jobs/{job_id}/part", dependencies=[Depends(require_auth)])
+async def add_part(job_id: str, seconds: float = Form(...), url: str = Form(""), file: UploadFile | None = File(None)):
+    """Store one generated clip and return the frame the next clip should start from."""
+    d = jobdir(job_id)
+    uid = uuid.uuid4().hex[:8]
+    part = d / f"part_{uid}.mp4"
+    try:
+        if file is not None:
+            size = 0
+            with part.open("wb") as fh:
+                while chunk := await file.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > 300 * 1024 * 1024:
+                        raise pl.PipelineError("קובץ הווידאו גדול מדי")
+                    fh.write(chunk)
+        elif url:
+            pl.fetch_public_url(url, part)
+        else:
+            raise pl.PipelineError("לא התקבל קליפ")
+        frame = f"frame_c{uid}.jpg"
+        pl.chain_frame(part, seconds, d / frame)
+    except pl.PipelineError as e:
+        part.unlink(missing_ok=True)
+        raise HTTPException(400, str(e))
+    return {"name": part.name, "frame": frame}
+
+
+class StitchPart(BaseModel):
+    name: str
+    seconds: float = Field(gt=0, le=600)
+
+
+class StitchReq(BaseModel):
+    parts: list[StitchPart] = Field(min_length=1, max_length=60)
+    audio: str
+
+
+@app.post("/api/jobs/{job_id}/stitch", dependencies=[Depends(require_auth)])
+def stitch(job_id: str, req: StitchReq):
+    d = jobdir(job_id)
+    names = [p.name for p in req.parts] + [req.audio]
+    if any(not SAFE_NAME.match(n) or not (d / n).is_file() for n in names) \
+            or any(not p.name.startswith("part_") for p in req.parts) or not req.audio.startswith("stage_"):
+        raise HTTPException(404)
+    out = f"final_{uuid.uuid4().hex[:8]}.mp4"
+    try:
+        pl.stitch([(d / p.name, p.seconds) for p in req.parts], d / req.audio, d / out)
+    except pl.PipelineError as e:
+        raise HTTPException(400, str(e))
+    return {"name": out}
+
+
 @app.get("/api/jobs/{job_id}/sign", dependencies=[Depends(require_auth)])
 def sign_url(job_id: str, name: str):
     jobdir(job_id)
