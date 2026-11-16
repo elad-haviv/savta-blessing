@@ -34,7 +34,7 @@ SIGN_KEY = (os.environ.get("MEDIA_SIGN_KEY") or APP_PASSWORD or secrets.token_he
 ALLOWED_EXT = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".3gp", ".mpg", ".mpeg", ".wmv", ".flv"}
 VOICE_MODELS = [
     {"id": "fish-audio/s2.1-pro", "label": "Fish Audio S2.1 Pro (ברירת מחדל)"},
-    {"id": "mistralai/voxtral-mini-tts-3-0", "label": "Mistral Voxtral TTS 3"},
+    {"id": "fish-audio/drama-3", "label": "Fish Audio Drama 3"},
     {"id": "heygen/heygen-voice-1", "label": "HeyGen Voice"},
 ]
 VIDEO_MODELS = [
