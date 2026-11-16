@@ -16,8 +16,8 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -62,12 +62,64 @@ HIDDEN = ("state.json",)
 
 # ------------------------------------------------------------------ auth
 
-def require_auth(creds: HTTPBasicCredentials = Depends(security)):
+COOKIE = "savta_auth"
+COOKIE_TTL = 30 * 24 * 3600
+
+LOGIN_HTML = """<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>כניסה</title>
+<style>body{font-family:system-ui,sans-serif;background:#16181d;color:#eee;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}
+form{display:flex;flex-direction:column;gap:12px;width:min(320px,90vw)}input,button{font-size:18px;padding:12px;border-radius:8px;border:1px solid #444;background:#23262d;color:#eee}
+button{background:#3b82f6;border:0;font-weight:600}.e{color:#f87171;min-height:1.2em}</style></head><body>
+<form method="post" action="/login"><h2>ברכת סבתא</h2><input type="password" name="password" placeholder="סיסמה" autofocus required>
+<button type="submit">כניסה</button><div class="e">__ERR__</div></form></body></html>"""
+LOGIN_CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+
+
+def _cookie_value(exp: int) -> str:
+    return f"{exp}.{hmac.new(SIGN_KEY, f'auth/{exp}'.encode(), hashlib.sha256).hexdigest()}"
+
+
+def _cookie_ok(v: str | None) -> bool:
+    try:
+        exp, sig = (v or "").split(".", 1)
+        good = hmac.new(SIGN_KEY, f"auth/{exp}".encode(), hashlib.sha256).hexdigest()
+        return int(exp) > time.time() and hmac.compare_digest(sig, good)
+    except Exception:
+        return False
+
+
+def _login_page(err: str = "", status: int = 401) -> HTMLResponse:
+    return HTMLResponse(LOGIN_HTML.replace("__ERR__", err), status_code=status,
+                        headers={"Content-Security-Policy": LOGIN_CSP, "Cache-Control": "no-store"})
+
+
+def require_auth(request: Request, creds: HTTPBasicCredentials = Depends(security)):
     if not APP_PASSWORD:
         raise HTTPException(503, "APP_PASSWORD לא הוגדר בשרת - האפליקציה חסומה עד שיוגדר")
-    ok = creds is not None and hmac.compare_digest(creds.password.encode(), APP_PASSWORD.encode())
-    if not ok:
-        raise HTTPException(401, "נדרשת סיסמה", headers={"WWW-Authenticate": 'Basic realm="Savta"'})
+    if creds is not None and hmac.compare_digest(creds.password.encode(), APP_PASSWORD.encode()):
+        return
+    if _cookie_ok(request.cookies.get(COOKIE)):
+        return
+    if request.method == "GET" and "text/html" in request.headers.get("accept", ""):
+        raise HTTPException(401, headers={"X-Login": "1"})
+    raise HTTPException(401, "נדרשת סיסמה")
+
+
+@app.exception_handler(HTTPException)
+async def _http_exc(request: Request, exc: HTTPException):
+    if exc.status_code == 401 and exc.headers and exc.headers.get("X-Login"):
+        return _login_page()
+    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+
+
+@app.post("/login")
+def login(password: str = Form("")):
+    if not APP_PASSWORD or not hmac.compare_digest(password.encode(), APP_PASSWORD.encode()):
+        return _login_page("סיסמה שגויה", 401)
+    r = RedirectResponse("/", status_code=303)
+    r.set_cookie(COOKIE, _cookie_value(int(time.time()) + COOKIE_TTL), max_age=COOKIE_TTL,
+                 httponly=True, secure=True, samesite="strict", path="/")
+    return r
 
 
 # ------------------------------------------------------------------ job state
