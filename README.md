@@ -1,1 +1,44 @@
-# savta-blessing
+# Savta Blessing (ברכת סבתא)
+
+אפליקציית ווב פרטית: מעלים סרטון ישן, האפליקציה מחלצת אודיו ופריימים של הפנים, מתמללת, מנתחת סגנון דיבור, משכפלת את הקול ומפיקה סרטון חדש שבו הדמות מברכת.
+
+## BYOK: המפתח לא מגיע לשרת
+
+מפתח ה-OpenRouter מוזן בדפדפן ונשמר ב-`localStorage` (או `sessionStorage`). כל הקריאות ל-OpenRouter (תמלול, ניתוח סגנון, שכפול קול, וידאו) יוצאות ישירות מהדפדפן אל `https://openrouter.ai`.
+
+- השרת עושה רק עבודת מדיה: ffmpeg, דירוג פריימים, חיתוך דגימות ואירוח קבצים.
+- אין בשרת משתנה סביבה, לוג או endpoint שמקבלים מפתח.
+- דף האפליקציה נשלח עם `Content-Security-Policy` ש-`connect-src` בו מוגבל ל-`'self'` ול-`https://openrouter.ai`, כך שגם סקריפט זר לא יכול לשלוח את המפתח לשום מקום אחר.
+- כל העלויות מחויבות בחשבון ה-OpenRouter של מי שמזין את המפתח.
+
+## הרצה מקומית
+
+```bash
+pip install -r requirements.txt   # צריך גם ffmpeg מותקן
+export APP_PASSWORD=...  DATA_DIR=./data  PUBLIC_BASE_URL=http://localhost:8000
+uvicorn app.main:app --port 8000
+```
+
+## משתני סביבה
+
+| משתנה | חובה | תיאור |
+|---|---|---|
+| `APP_PASSWORD` | כן | סיסמת כניסה (Basic Auth, כל שם משתמש). בלעדיה האפליקציה חסומה. מגנה על משאבי השרת, לא על המפתח |
+| `PUBLIC_BASE_URL` | מומלץ | כתובת האפליקציה ב-https, בלי `/` בסוף. כך OpenRouter מושך את התמונה והאודיו בקישור חתום וקצר-מועד. בלעדיה הם נשלחים כ-data URI |
+| `DATA_DIR` | לא | ברירת מחדל `/data` (למפות ל-volume) |
+| `MAX_UPLOAD_MB` | לא | ברירת מחדל 500 |
+| `JOB_TTL_DAYS` | לא | מחיקת ג'ובים ישנים, ברירת מחדל 14 |
+| `STT_MODEL` | לא | מודל תמלול, ברירת מחדל `elevenlabs/scribe-v2` |
+| `ANALYSIS_MODEL` | לא | מודל ניתוח סגנון (חייב לקבל אודיו), ברירת מחדל `google/gemini-3.8-flash` |
+
+## פריסה ב-Coolify
+
+1. Application מה-repo, Build Pack = Dockerfile, פורט 8000.
+2. דומיין עם HTTPS ומשתני הסביבה למעלה.
+3. Persistent Storage: mount ל-`/data`.
+
+## הערות
+
+- Worker יחיד: מצב העיבוד יושב בתוך התהליך. אל תגדיל ל-workers>1.
+- האודיו והסרטונים שהופקו נשמרים בדפדפן בלבד. הקישורים לסרטונים מ-OpenRouter פגי תוקף, ולכן יש להוריד אותם מיד.
+- נבדק מול תחליפים (stubs) של OpenRouter, לא מול ה-API האמיתי.
