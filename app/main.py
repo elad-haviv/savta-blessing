@@ -32,6 +32,8 @@ PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
 SIGN_KEY = (os.environ.get("MEDIA_SIGN_KEY") or APP_PASSWORD or secrets.token_hex(16)).encode()
 
 ALLOWED_EXT = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".3gp", ".mpg", ".mpeg", ".wmv", ".flv"}
+AUDIO_EXT = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".opus", ".flac", ".wma", ".amr"}
+IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".heic", ".heif"}
 VOICE_MODELS = [
     {"id": "fish-audio/s2.1-pro", "label": "Fish Audio S2.1 Pro (ברירת מחדל)"},
     {"id": "fish-audio/drama-3", "label": "Fish Audio Drama 3"},
@@ -189,11 +191,14 @@ def extract(job_id: str):
     d = jobdir(job_id)
     src = next(d.glob("source.*"))
     try:
-        mutate(job_id, status="analyzing", step="מחלץ אודיו מהסרטון")
+        mutate(job_id, status="analyzing", step="מחלץ אודיו")
         if not pl.has_audio(src):
-            raise pl.PipelineError("בסרטון אין רצועת קול")
+            raise pl.PipelineError("בקובץ אין רצועת קול")
         duration = pl.probe_duration(src)
         pl.extract_audio(src, d)
+        if src.suffix.lower() in AUDIO_EXT:
+            mutate(job_id, duration=round(duration, 1), frames=[], status="ready", step="")
+            return
         mutate(job_id, duration=round(duration, 1), step="בוחר פריימים של הפנים")
         frames = pl.extract_and_rank_frames(src, d, duration)
         mutate(job_id, frames=frames, status="ready", step="")
@@ -213,8 +218,8 @@ def config():
 @app.post("/api/jobs", dependencies=[Depends(require_auth)])
 async def create_job(file: UploadFile = File(...)):
     ext = Path(file.filename or "").suffix.lower()
-    if ext not in ALLOWED_EXT:
-        raise HTTPException(400, f"סוג קובץ לא נתמך ({ext or 'ללא סיומת'}). נתמכים: {', '.join(sorted(ALLOWED_EXT))}")
+    if ext not in ALLOWED_EXT | AUDIO_EXT:
+        raise HTTPException(400, f"סוג קובץ לא נתמך ({ext or 'ללא סיומת'}). נתמכים: {', '.join(sorted(ALLOWED_EXT | AUDIO_EXT))}")
     job_id = uuid.uuid4().hex
     d = DATA_DIR / "jobs" / job_id
     d.mkdir(parents=True)
@@ -229,7 +234,7 @@ async def create_job(file: UploadFile = File(...)):
                 raise HTTPException(413, f"הקובץ גדול מ-{MAX_UPLOAD_MB}MB")
             fh.write(chunk)
     state = {"id": job_id, "created": int(time.time()), "filename": file.filename,
-             "status": "queued", "step": "ממתין"}
+             "kind": "audio" if ext in AUDIO_EXT else "video", "status": "queued", "step": "ממתין"}
     (d / "state.json").write_text(json.dumps(state, ensure_ascii=False), "utf-8")
     pool.submit(extract, job_id)
     return {"id": job_id}
@@ -295,6 +300,8 @@ def add_frame(job_id: str, req: FrameReq):
     st = load(job_id)
     if st["status"] != "ready":
         raise HTTPException(409, "הניתוח עדיין לא הסתיים")
+    if st.get("kind") == "audio":
+        raise HTTPException(400, "המקור הוא קובץ אודיו, אין ממנו פריימים. אפשר להעלות תמונה")
     if req.t > st["duration"]:
         raise HTTPException(400, "הזמן חורג מאורך הסרטון")
     d = jobdir(job_id)
@@ -305,6 +312,35 @@ def add_frame(job_id: str, req: FrameReq):
     except pl.PipelineError as e:
         raise HTTPException(400, str(e))
     item = {"name": name, "t": round(req.t, 1), "score": 0}
+    mutate(job_id, lambda s: s.setdefault("frames", []).append(item))
+    return item
+
+
+@app.post("/api/jobs/{job_id}/image", dependencies=[Depends(require_auth)])
+async def add_image(job_id: str, file: UploadFile = File(...)):
+    """Upload a still photo to use as the face image, in addition to (or instead of) video frames."""
+    st = load(job_id)
+    if st["status"] != "ready":
+        raise HTTPException(409, "העיבוד עדיין לא הסתיים")
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in IMAGE_EXT:
+        raise HTTPException(400, f"סוג תמונה לא נתמך ({ext or 'ללא סיומת'})")
+    if sum(1 for f in st.get("frames", []) if f["name"].startswith("frame_u")) >= 20:
+        raise HTTPException(400, "אפשר להעלות עד 20 תמונות")
+    data = await file.read(25 * 1024 * 1024 + 1)
+    if len(data) > 25 * 1024 * 1024:
+        raise HTTPException(413, "התמונה גדולה מדי (עד 25MB)")
+    d = jobdir(job_id)
+    uid = uuid.uuid4().hex[:6]
+    raw, name = d / f"upload_{uid}{ext}", f"frame_u{uid}.jpg"
+    raw.write_bytes(data)
+    try:
+        pl.normalize_image(raw, d / name)
+    except pl.PipelineError:
+        raise HTTPException(400, "לא הצלחתי לקרוא את התמונה")
+    finally:
+        raw.unlink(missing_ok=True)
+    item = {"name": name, "t": None, "score": 0, "uploaded": True}
     mutate(job_id, lambda s: s.setdefault("frames", []).append(item))
     return item
 

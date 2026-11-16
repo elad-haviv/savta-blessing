@@ -62,6 +62,16 @@ def extract_frame_at(src: Path, t: float, out: Path) -> Path:
     return out
 
 
+def normalize_image(src: Path, out: Path, max_side: int = 1920) -> Path:
+    """Convert any uploaded still to an upright JPEG, downscaled so the long side is at most max_side."""
+    run(["ffmpeg", "-y", "-i", str(src), "-frames:v", "1",
+         "-vf", f"scale='min({max_side},iw)':'min({max_side},ih)':force_original_aspect_ratio=decrease",
+         "-q:v", "2", str(out)])
+    if not out.exists():
+        raise PipelineError("לא הצלחתי לקרוא את התמונה")
+    return out
+
+
 # ---------------------------------------------------------------- sample picking
 
 def suggest_samples(segs: list[dict], duration: float, max_len: float = 25.0,

@@ -75,9 +75,9 @@
   </section>
 
   <section id="s-upload">
-    <h2>1. סרטון מקור</h2>
-    <div class="drop" id="drop">גרור לכאן קובץ וידאו, או לחץ לבחירה<br><small>mp4, mov, mkv, avi, webm ועוד</small></div>
-    <input type="file" id="file" accept="video/*,.mkv,.avi,.mov,.m4v,.3gp" class="hidden">
+    <h2>1. קובץ מקור (וידאו או אודיו)</h2>
+    <div class="drop" id="drop">גרור לכאן קובץ וידאו או אודיו, או לחץ לבחירה<br><small>וידאו: mp4, mov, mkv ועוד · אודיו בלבד: mp3, wav, m4a ועוד (ואז מעלים תמונות בנפרד)</small></div>
+    <input type="file" id="file" accept="video/*,audio/*,.mkv,.avi,.mov,.m4v,.3gp,.mp3,.wav,.m4a,.aac,.ogg,.opus,.flac" class="hidden">
     <div class="bar hidden" id="upbar"><i></i></div>
     <div class="status" id="upstatus"></div>
     <div class="error" id="uperr"></div>
@@ -99,10 +99,13 @@
         <div><label>סוף דגימה (שניות)</label><input type="number" id="s-end" step="0.1" min="0"></div>
       </div>
       <div class="status" id="sample-info"></div>
-      <label>פריים של הפנים</label>
+      <label>תמונת הפנים</label>
       <div class="frames" id="frames"></div>
       <div class="warn" id="noframes"><span id="noframes-t"></span>
         <div class="row" style="margin-top:8px"><input type="number" id="manual-t" placeholder="שנייה" step="0.1" min="0"><button class="ghost" id="manual-btn" type="button">חלץ פריים</button></div></div>
+      <div style="margin-top:10px"><button class="ghost" id="img-btn" type="button">העלה תמונות משלך</button>
+        <input type="file" id="img-file" accept="image/*" multiple class="hidden"> <span class="status" id="img-status"></span></div>
+      <div class="error" id="imgerr"></div>
     </div>
   </section>
 
@@ -325,7 +328,7 @@ function render() {
   if (S.job.status === "error") { $("astatus").textContent = ""; $("aerr").textContent = S.job.error; return; }
   if (S.job.status !== "ready") { $("astatus").textContent = S.job.step || "ממתין בתור..."; return; }
   if (!S.analyzed) return;
-  $("astatus").textContent = `אורך הסרטון: ${fmt(S.job.duration)}`;
+  $("astatus").textContent = `אורך ${S.job.kind === "audio" ? "ההקלטה" : "הסרטון"}: ${fmt(S.job.duration)}`;
   if (!$("aresult").dataset.done || $("aresult").dataset.done !== S.job.id) { renderAnalysis(); $("aresult").dataset.done = S.job.id; }
   $("s-audio").classList.remove("hidden");
   renderAudios(); renderVideos();
@@ -349,10 +352,28 @@ function renderAnalysis() {
   frameNote();
 }
 function frameNote() {
-  $("noframes-t").textContent = $("frames").children.length ? "לא מרוצה מהפריימים? אפשר לחלץ פריים בשנייה מסוימת:" : "לא זוהו פנים בבירור בסרטון. אפשר לבחור זמן ידנית:";
+  const audioOnly = S.job.kind === "audio", has = $("frames").children.length;
+  $("noframes").classList.toggle("hidden", audioOnly && has > 0);
+  $("manual-t").parentElement.classList.toggle("hidden", audioOnly);
+  $("noframes-t").textContent = audioOnly ? "המקור הוא אודיו בלבד. העלה תמונה אחת או יותר של הפנים:" : has ? "לא מרוצה מהפריימים? אפשר לחלץ פריים בשנייה מסוימת או להעלות תמונה:" : "לא זוהו פנים בבירור בסרטון. אפשר לבחור זמן ידנית או להעלות תמונה:";
 }
+$("img-btn").onclick = () => $("img-file").click();
+$("img-file").onchange = async e => {
+  const files = [...e.target.files]; e.target.value = ""; $("imgerr").textContent = "";
+  for (let i = 0; i < files.length; i++) {
+    $("img-status").textContent = `מעלה תמונה ${i + 1} מתוך ${files.length}...`;
+    const fd = new FormData(); fd.append("file", files[i]);
+    try {
+      const f = await api(`/api/jobs/${S.job.id}/image`, { method: "POST", body: fd });
+      (S.job.frames = S.job.frames || []).push(f);
+      document.querySelectorAll('input[name="frame"]').forEach(r => r.checked = false);
+      addFrameCard(f, true);
+    } catch (err) { $("imgerr").textContent = `${files[i].name}: ${err.message}`; }
+  }
+  $("img-status").textContent = ""; frameNote();
+};
 function addFrameCard(f, checked) {
-  $("frames").insertAdjacentHTML("beforeend", `<label><input type="radio" name="frame" value="${esc(f.name)}" ${checked ? "checked" : ""}><img src="${fileUrl(f.name)}" alt=""><small>${fmt(f.t)}</small></label>`);
+  $("frames").insertAdjacentHTML("beforeend", `<label><input type="radio" name="frame" value="${esc(f.name)}" ${checked ? "checked" : ""}><img src="${fileUrl(f.name)}" alt=""><small>${f.uploaded ? "הועלתה" : fmt(f.t)}</small></label>`);
 }
 $("s-start").oninput = $("s-end").oninput = () => sampleInfo();
 function sampleInfo() {
