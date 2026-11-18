@@ -130,7 +130,9 @@
     <details style="margin-top:14px"><summary style="cursor:pointer;color:var(--accent)">הפקה ששילמת עליה נעלמה? שחזור לפי מזהה מ-OpenRouter</summary>
       <div class="note">מדביקים את מזהה ההפקה (או קישור שמכיל אותו) מעמוד ה-Logs ב-OpenRouter. הסרטון יורד בלי חיוב נוסף ונצרב עם הכתוביות והאודיו שהועלו כאן.</div>
       <div class="row" style="margin-top:8px"><div><input type="text" id="rec-id" dir="ltr" placeholder="gen-... או https://openrouter.ai/..."></div><button class="ghost" id="rec-btn" type="button">שחזר</button></div>
+      <div class="status" id="recstatus"></div>
       <div class="error" id="recerr"></div>
+      <div id="recvideo"></div>
     </details>
   </section>
 
@@ -433,9 +435,15 @@ $("rec-btn").onclick = async () => {
   const g = { gen_id: id, polling_url: "", page: "talk", model: "", label: subLabel(subOpts()), prompt: "", seconds: S.job.duration, chunk: 0, chunks: 1,
               audio: S.job.audio, stitch: subOpts(), title: (S.job.filename || "תמונה מדברת").replace(/\.[^.]+$/, ""),
               inputs: [S.job.frames[0].name, S.job.audio, S.job.subs] };
-  $("rec-btn").disabled = true;
-  await window.Shell?.trackGen(S.job.id, g);
-  await window.Shell?.collect({ ...g, job: S.job.id, created: Math.floor(Date.now() / 1000) });
+  if (!window.Shell?.collect) { $("recerr").textContent = "הדף טעון בגרסה ישנה. רענן את הדף ונסה שוב"; return; }
+  $("rec-btn").disabled = true; $("recvideo").innerHTML = ""; $("recstatus").textContent = "מתחיל...";
+  try {
+    await window.Shell.trackGen(S.job.id, g);
+    await window.Shell.collect({ ...g, job: S.job.id, created: Math.floor(Date.now() / 1000) }, (t, href) => {
+      $("recstatus").textContent = t;
+      if (href) $("recvideo").innerHTML = `<video controls playsinline src="${esc(href)}"></video><div class="status"><a href="${esc(href)}" download="recovered.mp4">הורד MP4</a></div>`;
+    });
+  } catch (e) { $("recstatus").textContent = ""; $("recerr").textContent = "השחזור נכשל: " + e.message; }
   $("rec-btn").disabled = false;
 };
 

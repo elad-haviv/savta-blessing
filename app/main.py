@@ -796,6 +796,8 @@ static_dir = Path(__file__).parent / "static"
 
 def _page(name: str) -> HTMLResponse:
     html = (static_dir / name).read_text("utf-8")
+    ver = int((static_dir / "shell.js").stat().st_mtime)
+    html = html.replace('src="/static/shell.js"', f'src="/static/shell.js?v={ver}"')
     return HTMLResponse(html, headers={"Content-Security-Policy": CSP, "Referrer-Policy": "no-referrer",
                                        "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 

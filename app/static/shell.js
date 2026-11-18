@@ -157,11 +157,12 @@
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const label = { blessing: "ברכה", talk: "תמונה מדברת", frames: "סרטון מתמונות" };
 
-  async function collect(g) {
+  async function collect(g, onStatus) {
     const key = getKey(), id = g.gen_id.slice(-8), what = `${label[g.page]} (${when(g.created)})`;
+    const say = t => { onStatus?.(t); note(id, esc(t), true); };
     const auth = { Authorization: `Bearer ${key}` };
     const poll = g.polling_url ? (g.polling_url.startsWith("http") ? g.polling_url : "https://openrouter.ai" + g.polling_url) : `https://openrouter.ai/api/v1/videos/${g.gen_id}`;
-    note(id, `נמצאה הפקה ששולמה ולא נשמרה: ${esc(what)}. אוסף אותה מ-OpenRouter בלי חיוב נוסף...`, true);
+    say(`אוסף את ההפקה ${what} מ-OpenRouter, בלי חיוב נוסף...`);
     try {
       let cur, deadline = Date.now() + 30 * 60 * 1000;
       for (;;) {
@@ -172,29 +173,42 @@
         if (cur.status === "completed") break;
         if (["failed", "cancelled", "expired"].includes(cur.status)) throw new Error(`ההפקה ${cur.status === "expired" ? "פגה" : "נכשלה"} ב-OpenRouter`);
         if (Date.now() > deadline) throw new Error("ההפקה עדיין לא הסתיימה. רענן מאוחר יותר");
+        say(`ההפקה עדיין בעבודה ב-OpenRouter (${cur.status || "pending"})...`);
         await sleep(5000);
       }
       const pf = new FormData(); pf.append("seconds", g.seconds || 99999);
-      if (cur.urls?.length) pf.append("url", cur.urls[0]);
+      if (cur.urls?.length) { say("השרת מוריד את הסרטון..."); pf.append("url", cur.urls[0]); }
       else if (cur.unsigned_urls?.length) {
-        const v = await fetch(cur.unsigned_urls[0], { headers: auth }); if (!v.ok) throw new Error("הורדת הסרטון מ-OpenRouter נכשלה");
-        pf.append("file", await v.blob(), "video.mp4");
+        const v = await fetch(cur.unsigned_urls[0], { headers: auth });
+        if (!v.ok) throw new Error(`הורדת הסרטון מ-OpenRouter נכשלה (${v.status})`);
+        const total = +v.headers.get("content-length") || 0, rd = v.body.getReader(), bufs = []; let got = 0;
+        for (;;) {
+          const { done, value } = await rd.read(); if (done) break;
+          bufs.push(value); got += value.length;
+          say(`מוריד את הסרטון: ${(got / 1e6).toFixed(1)}${total ? " מתוך " + (total / 1e6).toFixed(1) : ""} MB`);
+        }
+        pf.append("file", new Blob(bufs, { type: "video/mp4" }), "video.mp4");
+        say(`מעלה לשרת (${(got / 1e6).toFixed(1)} MB)...`);
       } else throw new Error("OpenRouter לא החזיר קישור לסרטון");
       let r = await fetch(`/api/jobs/${g.job}/part`, { method: "POST", body: pf });
-      if (!r.ok) throw new Error("שמירת הסרטון בשרת נכשלה");
+      if (!r.ok) { let m = ""; try { m = (await r.json()).detail; } catch (x) {} throw new Error("שמירת הסרטון בשרת נכשלה " + (m || r.status)); }
       const part = await r.json();
       let name = part.name, lbl = g.label;
       if (g.page === "talk" && g.chunks === 1 && g.audio) {  // finish the job the page would have done: join + subtitles
+        say(g.stitch?.subs ? "צורב כתוביות..." : "מחבר את הסרטון עם האודיו...");
         r = await postJSON(`/api/jobs/${g.job}/stitch`, { parts: [{ name: part.name, seconds: g.seconds }], audio: g.audio, ...(g.stitch || {}) });
         if (r.ok) name = (await r.json()).name; else lbl += " · בלי כתוביות";
       } else if (g.chunks > 1) lbl = `${lbl} · קטע ${g.chunk + 1} מתוך ${g.chunks}`;
       await Shell.record(g.job, { name, kind: g.page, title: g.title || "הפקה ששוחזרה", model: g.model, label: (lbl ? lbl + " · " : "") + "שוחזר",
                                   prompt: g.prompt, cost: cur.usage?.cost ?? null, inputs: g.inputs || [] });
       await Shell.genDone(g.job, g.gen_id, name);
+      onStatus?.("נשמר! הסרטון בהיסטוריה (תפריט ☰).", `/api/jobs/${g.job}/files/${name}`);
       note(id, `ההפקה ${esc(what)} נשמרה. <a data-open>פתח בהיסטוריה</a>`, true);
+      return name;
     } catch (e) {
       if (!/עדיין לא הסתיימה/.test(e.message)) await Shell.genDone(g.job, g.gen_id, "", "failed", e.message);
       note(id, `לא הצלחתי לשחזר את ${esc(what)}: ${esc(e.message)}`, true);
+      throw e;
     }
   }
   Shell.collect = collect;
@@ -204,7 +218,7 @@
       const items = (await r.json()).items || [];
       if (!items.length) return;
       if (!getKey()) { note("key", `יש ${items.length} הפקות ששולמו ולא נשמרו. הזן מפתח OpenRouter ורענן כדי לאסוף אותן.`, true); return; }
-      for (const g of items) await collect(g);
+      for (const g of items) { try { await collect(g); } catch (e) {} }
     } catch (e) {}
   })();
 })();
