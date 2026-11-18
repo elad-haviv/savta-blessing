@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>סרטון מתמונת התחלה וסיום</title>
+<style>
+  :root { --bg:#faf6f0; --card:#fff; --ink:#2b2420; --muted:#8a7f76; --accent:#b4572d; --line:#e8dfd3; --ok:#2e7d4f; --err:#b3261e; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family: "Segoe UI", Arial, sans-serif; line-height:1.55; }
+  main { max-width: 860px; margin: 0 auto; padding: 24px 16px 80px; }
+  h1 { font-size: 26px; margin: 8px 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .sub a { color: var(--accent); }
+  section { background: var(--card); border:1px solid var(--line); border-radius: 14px; padding: 18px 20px; margin-bottom: 18px; }
+  section h2 { font-size: 17px; margin: 0 0 12px; }
+  .hidden { display:none !important; }
+  button { background: var(--accent); color:#fff; border:0; border-radius:10px; padding: 10px 18px; font-size:15px; cursor:pointer; font-family:inherit; }
+  button:disabled { opacity:.5; cursor:default; }
+  button.ghost { background:transparent; color:var(--accent); border:1px solid var(--accent); }
+  button.small { padding:5px 12px; font-size:13px; }
+  input[type=text], input[type=password], select, textarea { width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:9px; font: inherit; background:#fff; color:inherit; }
+  input[type=password] { direction:ltr; text-align:left; }
+  textarea { min-height: 110px; resize: vertical; }
+  label { display:block; font-size:14px; color:var(--muted); margin: 12px 0 4px; }
+  label.inline { display:flex; gap:8px; align-items:center; margin-top:10px; color:var(--ink); }
+  label.inline input { width:auto; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; }
+  .row > * { flex:1; min-width: 140px; }
+  .row > button { flex:0 0 auto; }
+  .picks { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+  @media (max-width: 520px) { .picks { grid-template-columns: 1fr; } }
+  .pick { border:2px dashed var(--line); border-radius:12px; padding:14px; text-align:center; color:var(--muted); cursor:pointer; min-height:150px; display:flex; flex-direction:column; justify-content:center; align-items:center; gap:6px; }
+  .pick.over { border-color: var(--accent); color: var(--accent); }
+  .pick.set { border-style:solid; border-color: var(--accent); color: var(--ink); }
+  .pick b { color: var(--ink); }
+  .pick img { max-width:100%; max-height:200px; border-radius:8px; object-fit:contain; }
+  .status { margin-top:10px; color:var(--muted); }
+  .error { color:var(--err); margin-top:8px; white-space: pre-wrap; }
+  .item { border-top:1px solid var(--line); padding:12px 0; }
+  .item:first-of-type { border-top:0; }
+  video { width:100%; margin-top:8px; border-radius:10px; }
+  .tag { unicode-bidi:isolate; font-size:12px; background:#f4ece1; border-radius:6px; padding:2px 8px; color:var(--muted); }
+  .warn { background:#fff4e0; border:1px solid #f0d9a8; border-radius:10px; padding:10px 12px; font-size:14px; margin-top:10px; }
+  .okbox { background:#eaf6ee; border:1px solid #b9dcc5; border-radius:10px; padding:10px 12px; font-size:14px; }
+  .note { font-size:13px; color:var(--muted); margin-top:8px; }
+  .prompt-sm { font-size:13px; color:var(--muted); margin-top:4px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>סרטון מתמונת התחלה וסיום</h1>
+  <p class="sub">תמונת התחלה, תמונת סיום (לא חובה) ותיאור, ובוחרים כל מודל וידאו. <a href="/">ברכת סבתא</a> · <a href="/talk">תמונה מדברת</a></p>
+
+  <section id="s-key">
+    <h2>מפתח OpenRouter שלך</h2>
+    <div id="key-form">
+      <div class="row">
+        <div><input type="password" id="keyin" placeholder="sk-or-v1-..." autocomplete="off" spellcheck="false"></div>
+        <button id="key-save">שמור</button>
+      </div>
+      <label class="inline"><input type="checkbox" id="key-remember" checked> זכור בדפדפן הזה (אחרת רק עד סגירת הלשונית)</label>
+    </div>
+    <div id="key-ok" class="okbox hidden"></div>
+    <p class="note">אותו מפתח כמו בשאר העמודים. הוא נשמר רק בדפדפן שלך ונשלח רק אל openrouter.ai.</p>
+  </section>
+
+  <section>
+    <h2>1. התמונות והתיאור</h2>
+    <div class="picks">
+      <div class="pick" id="p-start"><b>תמונת התחלה</b><span>גרור לכאן או לחץ לבחירה</span></div>
+      <div class="pick" id="p-end"><b>תמונת סיום (לא חובה)</b><span>גרור לכאן או לחץ לבחירה</span></div>
+    </div>
+    <input type="file" id="f-start" accept="image/*,.heic,.heif" class="hidden">
+    <input type="file" id="f-end" accept="image/*,.heic,.heif" class="hidden">
+    <div id="end-clear-wrap" class="hidden" style="margin-top:8px"><button class="ghost small" id="end-clear" type="button">הסר את תמונת הסיום</button></div>
+    <label>תיאור הסרטון (מה קורה, תנועה, מצלמה, אווירה. באנגלית עובד הכי טוב, אבל אפשר גם בעברית)</label>
+    <textarea id="prompt" placeholder="The grandfather walks in from the left, sits down next to her on the sofa and puts his arm around her. Both look at the camera and smile. Soft warm light, static camera."></textarea>
+  </section>
+
+  <section>
+    <h2>2. מודל והגדרות</h2>
+    <label>מודל וידאו</label>
+    <select id="model"><option>טוען רשימת מודלים...</option></select>
+    <div class="prompt-sm" id="model-info"></div>
+    <div class="row">
+      <div><label>אורך (שניות)</label><select id="duration"></select></div>
+      <div><label>רזולוציה</label><select id="resolution"></select></div>
+      <div id="aspect-wrap"><label>יחס תמונה</label><select id="aspect"></select></div>
+    </div>
+    <label class="inline hidden" id="audio-wrap"><input type="checkbox" id="audio"> ליצור גם סאונד (אם המודל תומך, לפעמים במחיר גבוה יותר)</label>
+    <div class="prompt-sm" id="price"></div>
+    <div class="warn hidden" id="nopub">לא הוגדר PUBLIC_BASE_URL בשרת: התמונות יישלחו ל-OpenRouter כ-data URI. אם ההפקה נכשלת, הגדר את כתובת האפליקציה.</div>
+    <div style="margin-top:14px"><button id="go">הפק סרטון</button></div>
+    <div class="error" id="err"></div>
+  </section>
+
+  <section id="s-results" class="hidden">
+    <h2>3. סרטונים</h2>
+    <div id="videos"></div>
+    <p class="note">הסרטונים נשמרים בשרת לשבועיים, ואפשר להוריד אותם בכל זמן עד אז.</p>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const OR = "https://openrouter.ai/api/v1";
+const KEY_NAME = "savta_or_key";
+const VIDS_KEY = "savta_frames_vids";
+
+let S = { cfg: null, models: [], files: { start: null, end: null }, job: null, uploadedSig: "", videos: [] };
+
+// ================================================================ key (BYOK, shared with the other pages)
+function getKey() { try { return localStorage.getItem(KEY_NAME) || sessionStorage.getItem(KEY_NAME) || ""; } catch (e) { return ""; } }
+function setKey(k, remember) {
+  try { localStorage.removeItem(KEY_NAME); sessionStorage.removeItem(KEY_NAME); (remember ? localStorage : sessionStorage).setItem(KEY_NAME, k); } catch (e) {}
+}
+function clearKey() { try { localStorage.removeItem(KEY_NAME); sessionStorage.removeItem(KEY_NAME); } catch (e) {} }
+function renderKey() {
+  const k = getKey();
+  $("key-form").classList.toggle("hidden", !!k);
+  $("key-ok").classList.toggle("hidden", !k);
+  $("key-ok").innerHTML = k ? `מפתח שמור בדפדפן: <b dir="ltr">${esc(k.slice(0, 9))}…${esc(k.slice(-4))}</b> <button class="ghost small" id="key-del" style="margin-inline-start:10px">מחק מפתח</button>` : "";
+  if (k) $("key-del").onclick = () => { clearKey(); renderKey(); };
+}
+$("key-save").onclick = () => {
+  const k = $("keyin").value.trim();
+  if (!/^sk-or-/.test(k)) { alert("זה לא נראה כמו מפתח OpenRouter (מתחיל ב-sk-or-)"); return; }
+  setKey(k, $("key-remember").checked); $("keyin").value = ""; renderKey();
+};
+
+async function orFetch(path, opts = {}) {
+  const key = getKey();
+  if (!key) throw new Error("לא הוזן מפתח OpenRouter");
+  const headers = { Authorization: `Bearer ${key}`, "X-Title": "Savta Blessing", ...(opts.headers || {}) };
+  let r;
+  try { r = await fetch(path.startsWith("http") ? path : OR + path, { ...opts, headers }); }
+  catch (e) { throw new Error("הבקשה ל-OpenRouter נחסמה או נכשלה ברשת (" + e.message + ")"); }
+  if (!r.ok) {
+    let m = ""; try { const j = await r.json(); m = j.error?.message || JSON.stringify(j).slice(0, 400); } catch (e) { m = r.statusText; }
+    if (r.status === 401) m = "המפתח נדחה (401). בדוק שהוא תקין ופעיל. " + m;
+    if (r.status === 402) m = "אין מספיק קרדיט בחשבון OpenRouter. " + m;
+    throw new Error(`OpenRouter ${r.status}: ${m}`);
+  }
+  return r;
+}
+
+// ================================================================ helpers
+async function api(url, opts) {
+  const r = await fetch(url, opts);
+  if (!r.ok) { let m = r.statusText; try { const j = await r.json(); m = j.detail || m; } catch (e) {} throw new Error(typeof m === "string" ? m : JSON.stringify(m)); }
+  return r.json();
+}
+const fileUrl = (job, name) => `/api/jobs/${job}/files/${name}`;
+const fetchBlob = async url => { const r = await fetch(url); if (!r.ok) throw new Error("הורדת קובץ מהשרת נכשלה"); return r.blob(); };
+const toDataUri = blob => new Promise((res, rej) => { const f = new FileReader(); f.onload = () => res(f.result); f.onerror = rej; f.readAsDataURL(blob); });
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function saveVids() { try { localStorage.setItem(VIDS_KEY, JSON.stringify(S.videos.filter(v => v.status === "done").slice(-30))); } catch (e) {} }
+function loadVids() { try { return JSON.parse(localStorage.getItem(VIDS_KEY)) || []; } catch (e) { return []; } }
+
+// ================================================================ images
+function setImage(role, file) {
+  S.files[role] = file || null;
+  const box = $("p-" + role), title = role === "start" ? "תמונת התחלה" : "תמונת סיום (לא חובה)";
+  box.classList.toggle("set", !!file);
+  box.innerHTML = file
+    ? `<b>${title}</b><img src="${URL.createObjectURL(file)}" alt=""><span>לחץ להחלפה</span>`
+    : `<b>${title}</b><span>גרור לכאן או לחץ לבחירה</span>`;
+  $("end-clear-wrap").classList.toggle("hidden", !S.files.end);
+  renderModels();
+}
+for (const role of ["start", "end"]) {
+  const box = $("p-" + role), input = $("f-" + role);
+  box.onclick = () => input.click();
+  box.ondragover = e => { e.preventDefault(); box.classList.add("over"); };
+  box.ondragleave = () => box.classList.remove("over");
+  box.ondrop = e => { e.preventDefault(); box.classList.remove("over"); if (e.dataTransfer.files[0]) setImage(role, e.dataTransfer.files[0]); };
+  input.onchange = e => { if (e.target.files[0]) setImage(role, e.target.files[0]); e.target.value = ""; };
+}
+$("end-clear").onclick = () => setImage("end", null);
+
+// ================================================================ models (live list from OpenRouter, so new ones show up by themselves)
+const hasEnd = m => (m.supported_frame_images || []).includes("last_frame");
+const curModel = () => S.models.find(m => m.id === $("model").value);
+
+function renderModels() {
+  if (!S.models.length) return;
+  const needEnd = !!S.files.end, prev = $("model").value;
+  $("model").innerHTML = S.models.map(m => {
+    const off = needEnd && !hasEnd(m);
+    return `<option value="${esc(m.id)}" ${off ? "disabled" : ""}>${esc(m.name || m.id)}${hasEnd(m) ? "  · התחלה+סיום" : "  · התחלה בלבד"}</option>`;
+  }).join("");
+  const ok = id => S.models.some(m => m.id === id && (!needEnd || hasEnd(m)));
+  $("model").value = ok(prev) ? prev : ok("google/veo-3.1-fast") ? "google/veo-3.1-fast" : (S.models.find(m => !needEnd || hasEnd(m)) || {}).id;
+  renderParams();
+}
+
+function fillSelect(sel, values, fmtLabel, preferred) {
+  const prev = sel.value;
+  sel.innerHTML = values.map(v => `<option value="${esc(v)}">${esc(fmtLabel(v))}</option>`).join("");
+  const pick = [prev, ...preferred].find(v => values.map(String).includes(String(v)));
+  if (pick != null) sel.value = pick;
+}
+
+function renderParams() {
+  const m = curModel(); if (!m) return;
+  const durs = (m.supported_durations || []).slice().sort((a, b) => (a === -1) - (b === -1) || a - b);
+  $("duration").parentElement.classList.toggle("hidden", !durs.length);
+  fillSelect($("duration"), durs, v => +v === -1 ? "אוטומטי (המודל מחליט)" : v, [8, 6, 5, 10]);
+  const res = m.supported_resolutions || [];
+  $("resolution").parentElement.classList.toggle("hidden", !res.length);
+  fillSelect($("resolution"), res, v => v, ["1080p", "720p"]);
+  const ar = m.supported_aspect_ratios || [];
+  $("aspect-wrap").classList.toggle("hidden", !ar.length);
+  fillSelect($("aspect"), ["auto", ...ar], v => v === "auto" ? "לפי התמונה (ברירת מחדל)" : v, ["auto"]);
+  $("audio-wrap").classList.toggle("hidden", m.generate_audio !== true);
+  $("model-info").textContent = (m.description || "").slice(0, 220);
+  renderPrice();
+}
+
+function renderPrice() {
+  const m = curModel(); if (!m) return;
+  const skus = Object.entries(m.pricing_skus || {}), res = $("resolution").value.toLowerCase();
+  const match = skus.filter(([k]) => res && k.toLowerCase().includes(res));
+  const shown = (match.length ? match : skus).slice(0, 4).map(([k, v]) => `${k.replace(/_/g, " ")}: $${v}`);
+  $("price").textContent = shown.length ? "מחירון OpenRouter: " + shown.join(" · ") : "";
+}
+$("model").onchange = renderParams;
+$("resolution").onchange = renderPrice;
+
+// ================================================================ generate
+async function mediaUrl(job, name) {
+  if (S.cfg.public_url_set) {
+    const r = await api(`/api/jobs/${job}/sign?name=${encodeURIComponent(name)}`);
+    if (r.url) return r.url;
+  }
+  return toDataUri(await fetchBlob(fileUrl(job, name)));
+}
+
+async function ensureUploaded() {
+  const sig = [S.files.start, S.files.end].map(f => f ? `${f.name}:${f.size}:${f.lastModified}` : "-").join("|");
+  if (S.job && S.uploadedSig === sig) return S.job;
+  const fd = new FormData(); fd.append("start", S.files.start);
+  if (S.files.end) fd.append("end", S.files.end);
+  S.job = await api("/api/frames", { method: "POST", body: fd }); S.uploadedSig = sig;
+  return S.job;
+}
+
+async function generate(item, body, job) {
+  const submitted = await (await orFetch("/videos", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json();
+  const poll = submitted.polling_url ? (submitted.polling_url.startsWith("http") ? submitted.polling_url : "https://openrouter.ai" + submitted.polling_url) : `${OR}/videos/${submitted.id}`;
+  const deadline = Date.now() + 25 * 60 * 1000;
+  let cur = submitted, status = submitted.status || "pending";
+  while (!["completed", "failed", "cancelled", "expired"].includes(status)) {
+    if (Date.now() > deadline) throw new Error("ההפקה לקחה יותר מ-25 דקות ונעצרה");
+    await sleep(5000);
+    try { cur = await (await orFetch(poll)).json(); status = cur.status || status; item.provider_status = status; renderVideos(); } catch (e) { if (/401|402/.test(e.message)) throw e; }
+  }
+  if (status !== "completed") throw new Error(`ההפקה נכשלה (${status}): ${typeof cur.error === "string" ? cur.error : JSON.stringify(cur.error || "")}`);
+  if (cur.usage?.cost != null) item.cost = cur.usage.cost;
+  // keep a copy on our server: OpenRouter's links expire
+  item.provider_status = "שומר בשרת"; renderVideos();
+  const pf = new FormData(); pf.append("seconds", 99999);
+  if (cur.urls?.length) pf.append("url", cur.urls[0]);
+  else if (cur.unsigned_urls?.length) pf.append("file", await (await orFetch(cur.unsigned_urls[0])).blob(), "video.mp4");
+  else throw new Error("הסרטון הושלם אבל לא התקבל קישור להורדה");
+  const part = await api(`/api/jobs/${job.id}/part`, { method: "POST", body: pf });
+  return fileUrl(job.id, part.name);
+}
+
+$("go").onclick = async () => {
+  $("err").textContent = "";
+  const m = curModel(), prompt = $("prompt").value.trim();
+  if (!getKey()) { $("err").textContent = "הזן מפתח OpenRouter בראש הדף"; return; }
+  if (!S.files.start) { $("err").textContent = "בחר תמונת התחלה"; return; }
+  if (!m) { $("err").textContent = "בחר מודל"; return; }
+  if (S.files.end && !hasEnd(m)) { $("err").textContent = "המודל הזה לא תומך בתמונת סיום. בחר מודל אחר או הסר את תמונת הסיום"; return; }
+  if (!prompt && !confirm("לא כתבת תיאור. רוב המודלים צריכים תיאור כדי לדעת מה יקרה בסרטון. להמשיך בכל זאת?")) return;
+
+  const settings = [];
+  const item = { id: Math.random().toString(36).slice(2, 8), status: "working", model: m.id, prompt, provider_status: "מעלה תמונות" };
+  S.videos.push(item); renderVideos(); $("go").disabled = true;
+  try {
+    const job = await ensureUploaded();
+    const startF = job.frames.find(f => f.role === "start"), endF = job.frames.find(f => f.role === "end");
+    const frame_images = [{ type: "image_url", image_url: { url: await mediaUrl(job.id, startF.name) }, frame_type: "first_frame" }];
+    if (endF) frame_images.push({ type: "image_url", image_url: { url: await mediaUrl(job.id, endF.name) }, frame_type: "last_frame" });
+    const body = { model: m.id, frame_images };
+    if (prompt) body.prompt = prompt;
+    if (!$("duration").parentElement.classList.contains("hidden")) { body.duration = +$("duration").value; settings.push(+body.duration === -1 ? "אורך אוטומטי" : body.duration + " שנ׳"); }
+    if (!$("resolution").parentElement.classList.contains("hidden")) { body.resolution = $("resolution").value; settings.push(body.resolution); }
+    if (!$("aspect-wrap").classList.contains("hidden") && $("aspect").value !== "auto") { body.aspect_ratio = $("aspect").value; settings.push(body.aspect_ratio); }
+    if (m.generate_audio === true) { body.generate_audio = $("audio").checked; settings.push($("audio").checked ? "עם סאונד" : "בלי סאונד"); }
+    if (endF) settings.push("התחלה+סיום");
+    item.settings = settings.join(" · "); item.provider_status = "נשלח";
+    item.href = await generate(item, body, job);
+    item.status = "done"; saveVids();
+  } catch (e) { item.status = "error"; item.error = e.message; }
+  $("go").disabled = false; renderVideos();
+};
+
+function renderVideos() {
+  $("s-results").classList.toggle("hidden", !S.videos.length);
+  $("videos").innerHTML = S.videos.slice().reverse().map(v => `<div class="item">
+    <span class="tag">${esc(v.model)}</span> ${v.settings ? `<span class="tag">${esc(v.settings)}</span>` : ""}
+    ${v.prompt ? `<div class="prompt-sm">${esc(v.prompt.slice(0, 140))}${v.prompt.length > 140 ? "…" : ""}</div>` : ""}
+    ${v.status === "working" ? `<div class="status">מפיק סרטון (בדרך כלל 1-5 דקות)... ${esc(v.provider_status || "")}</div>`
+      : v.status === "error" ? `<div class="error">${esc(v.error)}</div>`
+      : `<video controls src="${esc(v.href)}"></video><div class="status"><a href="${esc(v.href)}" download="video.mp4">הורד MP4</a>${v.cost != null ? ` · עלות $${(+v.cost).toFixed(2)}` : ""}</div>`}
+  </div>`).join("");
+}
+
+// ================================================================ init
+(async function init() {
+  renderKey();
+  S.videos = loadVids(); renderVideos();
+  S.cfg = await api("/api/config");
+  $("nopub").classList.toggle("hidden", S.cfg.public_url_set);
+  try {
+    const r = await fetch(OR + "/videos/models");
+    if (!r.ok) throw new Error(r.status);
+    const all = (await r.json()).data || [];
+    S.models = all.filter(m => (m.supported_frame_images || []).includes("first_frame"))
+      .sort((a, b) => hasEnd(b) - hasEnd(a) || (a.name || a.id).localeCompare(b.name || b.id));
+    if (!S.models.length) throw new Error("empty");
+    renderModels();
+  } catch (e) {
+    $("model").innerHTML = "<option>לא הצלחתי לטעון את רשימת המודלים</option>";
+    $("err").textContent = "טעינת רשימת המודלים מ-OpenRouter נכשלה. רענן את הדף.";
+  }
+})();
+</script>
+</body>
+</html>

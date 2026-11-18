@@ -91,7 +91,7 @@ def _cookie_ok(v: str | None) -> bool:
         return False
 
 
-PAGES = ("/", "/talk")
+PAGES = ("/", "/talk", "/frames")
 
 
 def _login_page(err: str = "", status: int = 401, next_path: str = "/") -> HTMLResponse:
@@ -518,6 +518,35 @@ def create_talk(image: UploadFile = File(...), audio: UploadFile = File(...), su
     return state
 
 
+@app.post("/api/frames", dependencies=[Depends(require_auth)])
+def create_frames(start: UploadFile = File(...), end: UploadFile | None = File(None)):
+    """Start image (and optional end image) for a free-form image-to-video generation."""
+    imgs = [("start", start)] + ([("end", end)] if end is not None and end.filename else [])
+    exts = [_ext(f, IMAGE_EXT, "תמונת התחלה" if role == "start" else "תמונת סיום") for role, f in imgs]
+    job_id = uuid.uuid4().hex
+    d = DATA_DIR / "jobs" / job_id
+    d.mkdir(parents=True)
+    frames = []
+    try:
+        for (role, f), ext in zip(imgs, exts):
+            uid = uuid.uuid4().hex[:6]
+            raw = _save(f, d / f"upload_{uid}{ext}", 25, "התמונה")
+            name = f"frame_u{uid}.jpg"
+            try:
+                pl.normalize_image(raw, d / name)
+            except pl.PipelineError:
+                raise HTTPException(400, f"לא הצלחתי לקרוא את {'תמונת ההתחלה' if role == 'start' else 'תמונת הסיום'}")
+            finally:
+                raw.unlink(missing_ok=True)
+            frames.append({"name": name, "role": role, "t": None, "score": 0, "uploaded": True})
+    except BaseException:
+        shutil.rmtree(d, ignore_errors=True)
+        raise
+    state = {"id": job_id, "created": int(time.time()), "kind": "frames", "status": "ready", "frames": frames}
+    (d / "state.json").write_text(json.dumps(state, ensure_ascii=False), "utf-8")
+    return state
+
+
 @app.post("/api/jobs/{job_id}/subs", dependencies=[Depends(require_auth)])
 def replace_subs(job_id: str, subs: UploadFile = File(...)):
     """Swap in a corrected subtitle file; finished videos can then be re-burned without generating again."""
@@ -607,6 +636,11 @@ def index():
 @app.get("/talk", dependencies=[Depends(require_auth)])
 def talk_page():
     return _page("talk.html")
+
+
+@app.get("/frames", dependencies=[Depends(require_auth)])
+def frames_page():
+    return _page("frames.html")
 
 
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
