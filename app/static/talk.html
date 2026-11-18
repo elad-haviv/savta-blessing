@@ -127,9 +127,13 @@
     <div style="margin-top:14px"><button id="mk-video">הפק סרטון</button></div>
     <div class="error" id="videoerr"></div>
     <div id="videos"></div>
-    <details style="margin-top:14px"><summary style="cursor:pointer;color:var(--accent)">הפקה ששילמת עליה נעלמה? שחזור לפי מזהה מ-OpenRouter</summary>
-      <div class="note">מדביקים את מזהה ההפקה (או קישור שמכיל אותו) מעמוד ה-Logs ב-OpenRouter. הסרטון יורד בלי חיוב נוסף ונצרב עם הכתוביות והאודיו שהועלו כאן.</div>
-      <div class="row" style="margin-top:8px"><div><input type="text" id="rec-id" dir="ltr" placeholder="gen-... או https://openrouter.ai/..."></div><button class="ghost" id="rec-btn" type="button">שחזר</button></div>
+  </section>
+
+  <section id="s-recover">
+    <details><summary style="cursor:pointer;color:var(--accent);font-weight:600">הפקה ששילמת עליה נעלמה? שחזור או הורדה לפי מזהה מ-OpenRouter</summary>
+      <div class="note">מדביקים את מזהה ההפקה (gen-vid-...) מעמוד ה-Activity ב-OpenRouter. בלי חיוב נוסף. "שחזר" צורב את הכתוביות שהועלו כאן ושומר בהיסטוריה; "הורד ישירות" מוריד את הסרטון כמו שהוא, גם בלי להעלות קבצים.</div>
+      <div class="row" style="margin-top:8px"><div><input type="text" id="rec-id" dir="ltr" placeholder="gen-... או https://openrouter.ai/..."></div></div>
+      <div class="row" style="margin-top:8px"><button id="rec-btn" type="button">שחזר עם כתוביות ושמור</button><button class="ghost" id="rec-dl" type="button">הורד ישירות, בלי עיבוד</button></div>
       <div class="status" id="recstatus"></div>
       <div class="error" id="recerr"></div>
       <div id="recvideo"></div>
@@ -425,10 +429,40 @@ function onModel() {
 }
 $("vidmodel").onchange = onModel;
 
+const recId = () => { const raw = $("rec-id").value.trim(); return (raw.match(/videos\/([^/?#\s]+)/) || raw.match(/([A-Za-z0-9_-]{8,})\s*$/) || [])[1]; };
+
+// straight from OpenRouter to the phone: no server, no subtitles, no history
+$("rec-dl").onclick = async () => {
+  $("recerr").textContent = ""; $("recvideo").innerHTML = "";
+  const id = recId();
+  if (!id) { $("recerr").textContent = "לא זיהיתי מזהה. הדבק את המזהה או קישור שמכיל אותו"; return; }
+  if (!getKey()) { $("recerr").textContent = "הזן מפתח OpenRouter בראש הדף"; return; }
+  $("rec-dl").disabled = true; $("recstatus").textContent = "בודק את ההפקה ב-OpenRouter...";
+  try {
+    const cur = await (await orFetch(`/videos/${encodeURIComponent(id)}`)).json();
+    if (cur.status !== "completed") throw new Error(`ההפקה במצב ${cur.status || "לא ידוע"}, עדיין אין מה להוריד`);
+    let href;
+    if (cur.urls?.length) href = cur.urls[0];  // a signed link opens without the key
+    else if (cur.unsigned_urls?.length) {
+      const v = await orFetch(cur.unsigned_urls[0]);
+      const total = +v.headers.get("content-length") || 0, rd = v.body.getReader(), bufs = []; let got = 0;
+      for (;;) {
+        const { done, value } = await rd.read(); if (done) break;
+        bufs.push(value); got += value.length;
+        $("recstatus").textContent = `מוריד: ${(got / 1e6).toFixed(1)}${total ? " מתוך " + (total / 1e6).toFixed(1) : ""} MB`;
+      }
+      href = URL.createObjectURL(new Blob(bufs, { type: "video/mp4" }));
+    } else throw new Error("OpenRouter לא החזיר קישור לסרטון");
+    $("recstatus").textContent = "מוכן. לחץ \"שמור לקובץ\" (באייפון: בתוך הנגן ← שיתוף ← שמור סרטון).";
+    $("recvideo").innerHTML = `<video controls playsinline src="${esc(href)}"></video>
+      <div class="status"><a href="${esc(href)}" download="${esc(id)}.mp4" target="_blank" rel="noopener">שמור לקובץ</a></div>`;
+  } catch (e) { $("recstatus").textContent = ""; $("recerr").textContent = "ההורדה נכשלה: " + e.message; }
+  $("rec-dl").disabled = false;
+};
+
 $("rec-btn").onclick = async () => {
   $("recerr").textContent = "";
-  const raw = $("rec-id").value.trim();
-  const id = (raw.match(/videos\/([^/?#\s]+)/) || raw.match(/([A-Za-z0-9_-]{8,})\s*$/) || [])[1];
+  const id = recId();
   if (!id) { $("recerr").textContent = "לא זיהיתי מזהה. הדבק את המזהה או קישור שמכיל אותו"; return; }
   if (!getKey()) { $("recerr").textContent = "הזן מפתח OpenRouter בראש הדף"; return; }
   if (!S.job) { $("recerr").textContent = "קודם צריך את הקבצים (סעיף 1), כדי לצרוב את הכתוביות"; return; }
