@@ -107,15 +107,17 @@
 
   <section id="s-video" class="hidden">
     <h2>3. הסרטון</h2>
-    <label>מודל וידאו (כל המודלים ב-OpenRouter שמקבלים תמונה ואודיו)</label>
+    <label>מודל וידאו</label>
     <select id="vidmodel"><option>טוען רשימת מודלים...</option></select>
+    <div class="note">מודלי ה-Avatar של HeyGen מניעים את הפה, הפנים והגוף לפי האודיו (סנכרון שפתיים). המודלים בקבוצה "ניסיוני" רק מקבלים את האודיו כרפרנס, והפה לא תמיד יתאים לדיבור.</div>
     <div class="note" id="vinfo"></div>
+    <div id="vmotion-wrap" class="hidden"><label>כמה תנועה בגוף ובפנים</label><select id="vmotion"></select></div>
     <div class="row">
       <div id="vres-wrap"><label>רזולוציה</label><select id="vres"></select></div>
       <div><label>פיצול לקטעים: אורך מרבי בשניות (0 = בלי)</label><input type="number" id="vsplit" min="0" max="120" step="1" value="0"></div>
     </div>
-    <label>הנחיית תנועה (אופציונלי, באנגלית עובד הכי טוב)</label>
-    <input type="text" id="vprompt" placeholder="speaks warmly to the camera, slight head movements">
+    <label>הנחיית תנועה (אופציונלי, באנגלית עובד הכי טוב. ריק = תנועות טבעיות שמתאימות לדיבור)</label>
+    <input type="text" id="vprompt" placeholder="smiles warmly, nods, gestures with her hands while talking">
     <label class="inline"><input type="checkbox" id="sub-on" checked> לצרוב כתוביות</label>
     <div class="row" id="sub-opts">
       <div><label>גודל כתוביות</label><select id="sub-size"><option value="s">קטן</option><option value="m" selected>בינוני</option><option value="l">גדול</option></select></div>
@@ -142,6 +144,7 @@ const KEY_NAME = "savta_or_key";
 const JOB_KEY = "savta_talk_job";
 
 let S = { job: null, cfg: null, files: {}, videos: [], vinfo: {} };
+const DEFAULT_MOTION = "Speaks naturally and expressively to the camera: accurate lip-sync, lively facial expressions, natural head movement and hand gestures that follow the meaning and rhythm of the speech.";
 
 // ================================================================ key (BYOK, shared with the main page)
 function getKey() { try { return localStorage.getItem(KEY_NAME) || sessionStorage.getItem(KEY_NAME) || ""; } catch (e) { return ""; } }
@@ -314,21 +317,31 @@ async function mediaUrl(name) {
 
 async function genClip(model, imgUrl, audUrl, prompt, seconds, item) {
   const payload = { model, input_references: [{ type: "image_url", image_url: { url: imgUrl } }, { type: "audio_url", audio_url: { url: audUrl } }] };
-  if (prompt) payload.prompt = prompt;
   const info = S.vinfo[model] || {};
+  if (!prompt && info.lipsync) prompt = DEFAULT_MOTION;
+  if (prompt) payload.prompt = prompt;
+  // HeyGen motion controls (only the keys this model accepts)
+  const pass = info.pass || [], hg = {};
+  if ($("vmotion").value && pass.includes("expressiveness")) hg.expressiveness = $("vmotion").value;
+  if ($("vmotion").value && pass.includes("motion_expressiveness")) hg.motion_expressiveness = $("vmotion").value;
+  if (prompt && pass.includes("motion_prompt")) hg.motion_prompt = prompt;
+  if (Object.keys(hg).length) payload.provider = { options: { heygen: hg } };
   if (info.res && $("vres").value) payload.resolution = $("vres").value;
   if (!model.startsWith("heygen/")) {
     payload.duration = pickDuration(info.durs, seconds);
-    if (!prompt) payload.prompt = "The person in the photo speaks to the camera with natural lip-sync, gentle head movement and natural expressions.";
+    if (!prompt) payload.prompt = "The person in the photo is speaking the words in the audio, with accurate lip-sync, natural facial expressions, head movement and hand gestures that follow the speech.";
   }
   const submit = p => orFetch("/videos", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(p) }).then(r => r.json());
-  let job;
-  try { job = await submit(payload); }
-  catch (e) {
-    // some providers want the still as an explicit first frame
-    const p2 = { ...payload, frame_images: [{ type: "image_url", image_url: { url: imgUrl }, frame_type: "first_frame" }], input_references: payload.input_references.slice(1) };
-    try { job = await submit(p2); } catch (e2) { throw e; }
+  // fallbacks: without the motion options, then with the still as an explicit first frame
+  const noProv = { ...payload }; delete noProv.provider;
+  const attempts = [payload, ...(payload.provider ? [noProv] : []),
+    { ...noProv, frame_images: [{ type: "image_url", image_url: { url: imgUrl }, frame_type: "first_frame" }], input_references: payload.input_references.slice(1) }];
+  let job, firstErr;
+  for (const a of attempts) {
+    try { job = await submit(a); break; }
+    catch (e) { firstErr = firstErr || e; if (/401|402/.test(e.message)) throw e; }
   }
+  if (!job) throw firstErr;
   const poll = job.polling_url ? (job.polling_url.startsWith("http") ? job.polling_url : "https://openrouter.ai" + job.polling_url) : `${OR}/videos/${job.id}`;
   const deadline = Date.now() + 20 * 60 * 1000;
   let cur = job, status = job.status || "pending";
@@ -391,6 +404,11 @@ function onModel() {
     $("vres").value = info.res.includes("1080p") ? "1080p" : info.res.includes("720p") ? "720p" : info.res[0];
   }
   $("vinfo").textContent = (info.desc || "").slice(0, 200);
+  const pass = info.pass || [];
+  const levels = pass.includes("expressiveness") ? [["high", "הרבה (פנים, ראש וידיים)"], ["medium", "בינוני"], ["low", "מעט (רוב התנועה בפנים)"]]
+    : pass.includes("motion_expressiveness") ? [["default", "רגיל, עם תנועות ידיים שמתאימות לדיבור"], ["less", "רגוע יותר, פחות תנועות"]] : [];
+  $("vmotion-wrap").classList.toggle("hidden", !levels.length);
+  $("vmotion").innerHTML = levels.map(([v, l]) => `<option value="${v}">${l}</option>`).join("");
 }
 $("vidmodel").onchange = onModel;
 
@@ -404,14 +422,19 @@ async function loadModels() {
       fetch(OR + "/videos/models").then(r => r.ok ? r.json() : { data: [] }).catch(() => ({ data: [] }))]);
     const caps = Object.fromEntries((vids.data || []).map(m => [m.id, m]));
     list = (all.data || []).filter(m => { const im = m.architecture?.input_modalities || []; return im.includes("image") && im.includes("audio"); })
-      .map(m => ({ id: m.id, label: m.name || m.id, desc: m.description,
+      .filter(m => m.id !== "heygen/heygen-video-1")  // generates its own soundtrack instead of following ours
+      .map(m => ({ id: m.id, label: m.name || m.id, desc: m.description, lipsync: /^heygen\/.*avatar/.test(m.id),
+                   pass: caps[m.id]?.allowed_passthrough_parameters || [],
                    durs: caps[m.id]?.supported_durations || null, res: caps[m.id]?.supported_resolutions || null }))
-      .sort((a, b) => b.id.startsWith("heygen/") - a.id.startsWith("heygen/") || a.label.localeCompare(b.label));
+      .sort((a, b) => b.lipsync - a.lipsync || b.id.localeCompare(a.id));
   } catch (e) { list = []; }
-  if (!list.length) list = S.cfg.video_models.map(m => ({ ...m }));  // fallback: the server's short list
+  if (!list.length) list = S.cfg.video_models.map(m => ({ ...m, lipsync: m.id.startsWith("heygen/"), pass: m.id === "heygen/avatar-iv" ? ["expressiveness", "motion_prompt"] : [] }));
   for (const m of list) S.vinfo[m.id] = m;
-  $("vidmodel").innerHTML = list.map(m => `<option value="${esc(m.id)}">${esc(m.label)}</option>`).join("");
-  if (S.vinfo["heygen/avatar-iv"]) $("vidmodel").value = "heygen/avatar-iv";
+  const opt = m => `<option value="${esc(m.id)}">${esc(m.label)}</option>`;
+  const sync = list.filter(m => m.lipsync), rest = list.filter(m => !m.lipsync);
+  $("vidmodel").innerHTML = (sync.length ? `<optgroup label="סנכרון שפתיים (מומלץ)">${sync.map(opt).join("")}</optgroup>` : "")
+    + (rest.length ? `<optgroup label="ניסיוני: האודיו כרפרנס בלבד">${rest.map(opt).join("")}</optgroup>` : "");
+  $("vidmodel").value = ["heygen/heygen-avatar-6", "heygen/avatar-iv"].find(id => S.vinfo[id]) || list[0].id;
   onModel();
 }
 $("mk-video").onclick = async () => {
