@@ -554,6 +554,67 @@ def replace_subs(job_id: str, subs: UploadFile = File(...)):
     return mutate(job_id, subs=name, cues=cues)
 
 
+# ------------------------------------------------------------------ production history (all pages, all devices)
+
+class RecordReq(BaseModel):
+    name: str
+    kind: str = Field(pattern="^(blessing|talk|frames)$")
+    title: str = Field("", max_length=300)
+    model: str = Field("", max_length=120)
+    label: str = Field("", max_length=200)
+    prompt: str = Field("", max_length=3000)
+    cost: float | None = None
+    inputs: list[str] = Field(default_factory=list, max_length=10)
+
+
+@app.post("/api/jobs/{job_id}/record", dependencies=[Depends(require_auth)])
+def record_output(job_id: str, req: RecordReq):
+    """Add a finished video to the history, with the input files it was made from."""
+    d = jobdir(job_id)
+    if not SAFE_NAME.match(req.name) or not req.name.startswith(("final_", "part_")) or not (d / req.name).is_file():
+        raise HTTPException(404, "הסרטון לא נמצא בשרת")
+    inputs = [n for n in dict.fromkeys(req.inputs)
+              if SAFE_NAME.match(n) and not n.startswith((".", "source")) and n not in HIDDEN and (d / n).is_file()]
+    thumb = f"thumb_{Path(req.name).stem}.jpg"
+    try:
+        pl.make_thumb(d / req.name, d / thumb)
+    except pl.PipelineError:
+        thumb = None
+    entry = {**req.model_dump(exclude={"inputs"}), "inputs": inputs, "thumb": thumb, "created": int(time.time())}
+
+    def add(s):
+        s["outputs"] = [o for o in s.get("outputs", []) if o["name"] != req.name] + [entry]
+    mutate(job_id, add)
+    return {**entry, "job": job_id}
+
+
+@app.get("/api/history", dependencies=[Depends(require_auth)])
+def history():
+    items = []
+    root = DATA_DIR / "jobs"
+    for d in root.iterdir() if root.is_dir() else []:
+        try:
+            st = json.loads((d / "state.json").read_text("utf-8"))
+        except (OSError, ValueError):
+            continue
+        for o in st.get("outputs", []):
+            if (d / o["name"]).is_file():
+                items.append({**o, "job": st["id"], "expires": st.get("created", 0) + JOB_TTL_DAYS * 86400})
+    items.sort(key=lambda o: o.get("created", 0), reverse=True)
+    return {"items": items[:300], "ttl_days": JOB_TTL_DAYS}
+
+
+@app.delete("/api/jobs/{job_id}/outputs/{name}", dependencies=[Depends(require_auth)])
+def delete_output(job_id: str, name: str):
+    d = jobdir(job_id)
+    if not SAFE_NAME.match(name) or not name.startswith(("final_", "part_")):
+        raise HTTPException(404)
+    (d / name).unlink(missing_ok=True)
+    (d / f"thumb_{Path(name).stem}.jpg").unlink(missing_ok=True)
+    mutate(job_id, lambda s: s.update(outputs=[o for o in s.get("outputs", []) if o["name"] != name]))
+    return {"ok": True}
+
+
 @app.get("/api/jobs/{job_id}/sign", dependencies=[Depends(require_auth)])
 def sign_url(job_id: str, name: str):
     jobdir(job_id)

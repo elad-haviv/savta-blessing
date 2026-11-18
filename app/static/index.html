@@ -487,7 +487,12 @@ async function makeVideo(model, frame, audio, prompt, item) {
   if (!(maxLen >= 4) || (audio.seconds || 0) <= maxLen + 0.5) {
     const [imgUrl, audUrl] = await Promise.all([mediaUrl(frame), mediaUrl(staged.name, audio.blob)]);
     const r = await genClip(model, imgUrl, audUrl, prompt, audio.seconds, item);
-    return { href: r.url || URL.createObjectURL(r.blob) };
+    try {  // OpenRouter's links expire: keep a copy on the server
+      const pf = new FormData(); pf.append("seconds", 99999);
+      if (r.url) pf.append("url", r.url); else pf.append("file", r.blob, "clip.mp4");
+      const part = await api(`/api/jobs/${S.job.id}/part`, { method: "POST", body: pf });
+      return { href: fileUrl(part.name), name: part.name, staged: staged.name };
+    } catch (e) { return { href: r.url || URL.createObjectURL(r.blob) }; }
   }
   // Long blessing on a model with a clip-length limit: cut the audio at pauses, generate clip by clip,
   // start every clip from the last frame of the previous one, then join everything on the server.
@@ -511,7 +516,7 @@ async function makeVideo(model, frame, audio, prompt, item) {
   item.progress = "מחבר את הקטעים"; item.provider_status = ""; renderVideos();
   const fin = await post(`/api/jobs/${S.job.id}/stitch`, { parts, audio: staged.name });
   item.progress = "";
-  return { href: fileUrl(fin.name) };
+  return { href: fileUrl(fin.name), name: fin.name, staged: staged.name };
 }
 
 $("vidmodel").onchange = () => { $("vsplit").value = $("vidmodel").value.includes("seedance") ? 14 : 0; };
@@ -524,7 +529,11 @@ $("mk-video").onclick = async () => {
   if (!getKey()) { $("videoerr").textContent = "הזן מפתח OpenRouter בראש הדף"; return; }
   const item = { id: Math.random().toString(36).slice(2, 8), status: "working", model: $("vidmodel").value };
   S.videos.push(item); renderVideos(); $("mk-video").disabled = true;
-  try { Object.assign(item, await makeVideo(item.model, frame, audio, $("vprompt").value.trim(), item), { status: "done" }); }
+  try {
+    Object.assign(item, await makeVideo(item.model, frame, audio, $("vprompt").value.trim(), item), { status: "done" });
+    if (item.name) window.Shell?.record(S.job.id, { name: item.name, kind: "blessing", title: audio.text.slice(0, 80), model: item.model,
+      label: "קול: " + audio.model, prompt: audio.text, cost: item.cost ?? null, inputs: [frame, item.staged] });
+  }
   catch (e) { item.status = "error"; item.error = e.message; }
   $("mk-video").disabled = false; renderVideos();
 };
@@ -553,5 +562,6 @@ $("del-job").onclick = async () => {
   if (saved) { S.job = { id: saved }; pollJob(); }
 })();
 </script>
+<script src="/static/shell.js"></script>
 </body>
 </html>

@@ -166,6 +166,16 @@ def video_info(path: Path) -> tuple[int, int, float]:
         raise PipelineError("הקליפ שהתקבל אינו קובץ וידאו תקין")
 
 
+def make_thumb(video: Path, out: Path) -> Path:
+    """Small poster image for the history list."""
+    _, _, dur = video_info(video)
+    run(["ffmpeg", "-y", "-ss", f"{min(1.0, dur / 3):.2f}", "-i", str(video), "-frames:v", "1",
+         "-vf", "scale=320:-2", "-q:v", "4", str(out)])
+    if not out.exists():
+        raise PipelineError("לא נוצרה תמונה מוקטנת")
+    return out
+
+
 def chain_frame(part: Path, seconds: float, out: Path) -> Path:
     """The frame the next clip should start from: where this clip's audio ends (or its last frame)."""
     _, _, dur = video_info(part)

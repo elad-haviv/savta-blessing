@@ -383,7 +383,7 @@ async function makeVideo(model, prompt, opts, item) {
   item.progress = opts.subs ? "מחבר וצורב כתוביות" : "מחבר את הסרטון"; item.provider_status = ""; renderVideos();
   const fin = await post(`/api/jobs/${S.job.id}/stitch`, { parts, audio: S.job.audio, ...opts });
   item.progress = "";
-  return { href: fileUrl(fin.name) };
+  return { href: fileUrl(fin.name), name: fin.name };
 }
 
 // the shortest duration the model supports that still covers the audio (longer audio gets split, see vsplit)
@@ -443,10 +443,19 @@ $("mk-video").onclick = async () => {
   const opts = subOpts();
   const item = { id: Math.random().toString(36).slice(2, 8), status: "working", model: $("vidmodel").value, label: subLabel(opts) };
   S.videos.push(item); renderVideos(); $("mk-video").disabled = true;
-  try { Object.assign(item, await makeVideo(item.model, $("vprompt").value.trim(), opts, item), { status: "done" }); saveVids(); }
+  try {
+    Object.assign(item, await makeVideo(item.model, $("vprompt").value.trim(), opts, item), { status: "done" }); saveVids();
+    recordTalk(item, $("vprompt").value.trim());
+  }
   catch (e) { item.status = "error"; item.error = e.message; }
   $("mk-video").disabled = false; renderVideos();
 };
+
+function recordTalk(item, prompt) {
+  item.prompt = prompt;
+  window.Shell?.record(S.job.id, { name: item.name, kind: "talk", title: (S.job.filename || "תמונה מדברת").replace(/\.[^.]+$/, ""),
+    model: item.model, label: item.label, prompt, cost: item.cost ?? null, inputs: [S.job.frames[0].name, S.job.audio, S.job.subs] });
+}
 
 // re-run only the cheap server step (join + subtitles) on clips that were already generated
 async function reburn(id) {
@@ -455,7 +464,11 @@ async function reburn(id) {
   const item = { id: Math.random().toString(36).slice(2, 8), status: "working", model: src.model, parts: src.parts,
                  label: subLabel(opts) + " (צריבה מחדש)", progress: "צורב מחדש" };
   S.videos.push(item); renderVideos();
-  try { const fin = await post(`/api/jobs/${S.job.id}/stitch`, { parts: src.parts, audio: S.job.audio, ...opts }); Object.assign(item, { href: fileUrl(fin.name), status: "done", progress: "" }); saveVids(); }
+  try {
+    const fin = await post(`/api/jobs/${S.job.id}/stitch`, { parts: src.parts, audio: S.job.audio, ...opts });
+    Object.assign(item, { href: fileUrl(fin.name), name: fin.name, status: "done", progress: "", cost: 0 }); saveVids();
+    recordTalk(item, src.prompt || "");
+  }
   catch (e) { item.status = "error"; item.error = e.message; }
   renderVideos();
 }
@@ -493,5 +506,6 @@ $("del-job").onclick = async () => {
   } catch (e) { try { localStorage.removeItem(JOB_KEY); } catch (x) {} }
 })();
 </script>
+<script src="/static/shell.js"></script>
 </body>
 </html>

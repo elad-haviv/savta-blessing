@@ -288,7 +288,7 @@ async function generate(item, body, job) {
   else if (cur.unsigned_urls?.length) pf.append("file", await (await orFetch(cur.unsigned_urls[0])).blob(), "video.mp4");
   else throw new Error("הסרטון הושלם אבל לא התקבל קישור להורדה");
   const part = await api(`/api/jobs/${job.id}/part`, { method: "POST", body: pf });
-  return fileUrl(job.id, part.name);
+  return part.name;
 }
 
 $("go").onclick = async () => {
@@ -316,8 +316,10 @@ $("go").onclick = async () => {
     if (m.generate_audio === true) { body.generate_audio = $("audio").checked; settings.push($("audio").checked ? "עם סאונד" : "בלי סאונד"); }
     if (endF) settings.push("התחלה+סיום");
     item.settings = settings.join(" · "); item.provider_status = "נשלח";
-    item.href = await generate(item, body, job);
-    item.status = "done"; saveVids();
+    const name = await generate(item, body, job);
+    item.href = fileUrl(job.id, name); item.status = "done"; saveVids();
+    window.Shell?.record(job.id, { name, kind: "frames", title: prompt ? prompt.slice(0, 80) : "סרטון מתמונות", model: m.id,
+      label: item.settings, prompt, cost: item.cost ?? null, inputs: job.frames.map(f => f.name) });
   } catch (e) { item.status = "error"; item.error = e.message; }
   $("go").disabled = false; renderVideos();
 };
@@ -353,5 +355,6 @@ function renderVideos() {
   }
 })();
 </script>
+<script src="/static/shell.js"></script>
 </body>
 </html>
