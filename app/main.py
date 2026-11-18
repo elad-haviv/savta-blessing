@@ -588,20 +588,67 @@ def record_output(job_id: str, req: RecordReq):
     return {**entry, "job": job_id}
 
 
-@app.get("/api/history", dependencies=[Depends(require_auth)])
-def history():
-    items = []
+KIND_OF_JOB = {"talk": "talk", "frames": "frames"}  # anything else came from the main page
+
+
+def _untracked(d: Path, st: dict) -> list[dict]:
+    """Finished videos made before the history existed: final_* files, or part_* on the frames page
+    (elsewhere part_* are just the pieces a final video was stitched from)."""
+    known = {o["name"] for o in st.get("outputs", [])}
+    kind = KIND_OF_JOB.get(st.get("kind"), "blessing")
+    vids = sorted(d.glob("part_*.mp4" if kind == "frames" else "final_*.mp4"))
+    out = []
+    for v in vids:
+        if v.name in known:
+            continue
+        thumb = f"thumb_{v.stem}.jpg"
+        out.append({"name": v.name, "kind": kind, "title": Path(st.get("filename") or "").stem or "סרטון מלפני ההיסטוריה",
+                    "model": "", "label": "מלפני ההיסטוריה", "prompt": "", "cost": None,
+                    "inputs": [f["name"] for f in st.get("frames", [])[:2] if (d / f["name"]).is_file()]
+                              + [n for n in (st.get("audio"), st.get("subs")) if n and (d / n).is_file()],
+                    "thumb": thumb if (d / thumb).is_file() else None, "created": int(v.stat().st_mtime)})
+    return out
+
+
+def _jobs():
     root = DATA_DIR / "jobs"
     for d in root.iterdir() if root.is_dir() else []:
         try:
-            st = json.loads((d / "state.json").read_text("utf-8"))
+            yield d, json.loads((d / "state.json").read_text("utf-8"))
         except (OSError, ValueError):
             continue
-        for o in st.get("outputs", []):
+
+
+@app.get("/api/history", dependencies=[Depends(require_auth)])
+def history():
+    items = []
+    for d, st in _jobs():
+        for o in st.get("outputs", []) + _untracked(d, st):
             if (d / o["name"]).is_file():
-                items.append({**o, "job": st["id"], "expires": st.get("created", 0) + JOB_TTL_DAYS * 86400})
+                items.append({**o, "job": st["id"]})
     items.sort(key=lambda o: o.get("created", 0), reverse=True)
     return {"items": items[:300], "ttl_days": JOB_TTL_DAYS}
+
+
+def inventory():
+    """At startup: make thumbnails for videos made before the history existed, and list every video in the log."""
+    n = 0
+    for d, st in _jobs():
+        for o in st.get("outputs", []) + _untracked(d, st):
+            v = d / o["name"]
+            if not v.is_file():
+                continue
+            thumb = d / f"thumb_{v.stem}.jpg"
+            if not thumb.is_file():
+                try:
+                    pl.make_thumb(v, thumb)
+                except Exception:  # noqa: BLE001 - a missing thumbnail is fine
+                    pass
+            n += 1
+            print(f"[inventory] {time.strftime('%Y-%m-%d %H:%M', time.localtime(v.stat().st_mtime))} | "
+                  f"{o['kind']} | {o.get('title') or '-'} | {o.get('model') or '-'} | {st['id']}/{v.name} | "
+                  f"{v.stat().st_size / 1e6:.1f}MB", flush=True)
+    print(f"[inventory] {n} videos on the server", flush=True)
 
 
 @app.delete("/api/jobs/{job_id}/outputs/{name}", dependencies=[Depends(require_auth)])
@@ -678,6 +725,7 @@ def startup():
     (DATA_DIR / "jobs").mkdir(parents=True, exist_ok=True)
     mark_interrupted()
     cleanup_old()
+    threading.Thread(target=inventory, daemon=True).start()
 
 
 static_dir = Path(__file__).parent / "static"
