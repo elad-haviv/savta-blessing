@@ -271,6 +271,11 @@ async function ensureUploaded() {
 
 async function generate(item, body, job) {
   const submitted = await (await orFetch("/videos", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json();
+  // remember the paid job on the server right away, so a refresh or a locked phone can't lose it
+  item.genId = submitted.id;
+  window.Shell?.trackGen(job.id, { gen_id: submitted.id, polling_url: submitted.polling_url || "", page: "frames", model: body.model,
+    label: item.settings || "", prompt: body.prompt || "", title: body.prompt ? body.prompt.slice(0, 80) : "סרטון מתמונות",
+    seconds: 99999, chunk: 0, chunks: 1, inputs: job.frames.map(f => f.name) });
   const poll = submitted.polling_url ? (submitted.polling_url.startsWith("http") ? submitted.polling_url : "https://openrouter.ai" + submitted.polling_url) : `${OR}/videos/${submitted.id}`;
   const deadline = Date.now() + 25 * 60 * 1000;
   let cur = submitted, status = submitted.status || "pending";
@@ -279,7 +284,10 @@ async function generate(item, body, job) {
     await sleep(5000);
     try { cur = await (await orFetch(poll)).json(); status = cur.status || status; item.provider_status = status; renderVideos(); } catch (e) { if (/401|402/.test(e.message)) throw e; }
   }
-  if (status !== "completed") throw new Error(`ההפקה נכשלה (${status}): ${typeof cur.error === "string" ? cur.error : JSON.stringify(cur.error || "")}`);
+  if (status !== "completed") {
+    window.Shell?.genDone(job.id, submitted.id, "", "failed", String(cur.error || status));
+    throw new Error(`ההפקה נכשלה (${status}): ${typeof cur.error === "string" ? cur.error : JSON.stringify(cur.error || "")}`);
+  }
   if (cur.usage?.cost != null) item.cost = cur.usage.cost;
   // keep a copy on our server: OpenRouter's links expire
   item.provider_status = "שומר בשרת"; renderVideos();
@@ -318,8 +326,9 @@ $("go").onclick = async () => {
     item.settings = settings.join(" · "); item.provider_status = "נשלח";
     const name = await generate(item, body, job);
     item.href = fileUrl(job.id, name); item.status = "done"; saveVids();
-    window.Shell?.record(job.id, { name, kind: "frames", title: prompt ? prompt.slice(0, 80) : "סרטון מתמונות", model: m.id,
+    await window.Shell?.record(job.id, { name, kind: "frames", title: prompt ? prompt.slice(0, 80) : "סרטון מתמונות", model: m.id,
       label: item.settings, prompt, cost: item.cost ?? null, inputs: job.frames.map(f => f.name) });
+    window.Shell?.genDone(job.id, item.genId, name);
   } catch (e) { item.status = "error"; item.error = e.message; }
   $("go").disabled = false; renderVideos();
 };

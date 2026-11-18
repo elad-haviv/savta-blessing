@@ -594,16 +594,25 @@ KIND_OF_JOB = {"talk": "talk", "frames": "frames"}  # anything else came from th
 def _untracked(d: Path, st: dict) -> list[dict]:
     """Finished videos made before the history existed: final_* files, or part_* on the frames page
     (elsewhere part_* are just the pieces a final video was stitched from)."""
-    known = {o["name"] for o in st.get("outputs", [])}
+    known = {o["name"] for o in st.get("outputs", [])} | {g.get("part") for g in st.get("gens", {}).values()}
     kind = KIND_OF_JOB.get(st.get("kind"), "blessing")
-    vids = sorted(d.glob("part_*.mp4" if kind == "frames" else "final_*.mp4"))
+    orphan = False
+    if kind == "frames":
+        vids = sorted(d.glob("part_*.mp4"))
+    else:
+        vids = sorted(d.glob("final_*.mp4"))
+        if not vids:  # a generated clip that never got joined (page closed mid-way): still worth showing
+            vids, orphan = sorted(d.glob("part_*.mp4")), True
     out = []
     for v in vids:
         if v.name in known:
             continue
         thumb = f"thumb_{v.stem}.jpg"
+        if orphan and not (d / thumb).is_file():
+            continue  # unreadable (half-downloaded) clips get no thumbnail at startup: skip them
         out.append({"name": v.name, "kind": kind, "title": Path(st.get("filename") or "").stem or "סרטון מלפני ההיסטוריה",
-                    "model": "", "label": "מלפני ההיסטוריה", "prompt": "", "cost": None,
+                    "model": "", "label": "קטע שהופק ולא חובר (בלי כתוביות)" if orphan else "מלפני ההיסטוריה",
+                    "prompt": "", "cost": None,
                     "inputs": [f["name"] for f in st.get("frames", [])[:2] if (d / f["name"]).is_file()]
                               + [n for n in (st.get("audio"), st.get("subs")) if n and (d / n).is_file()],
                     "thumb": thumb if (d / thumb).is_file() else None, "created": int(v.stat().st_mtime)})
@@ -617,6 +626,60 @@ def _jobs():
             yield d, json.loads((d / "state.json").read_text("utf-8"))
         except (OSError, ValueError):
             continue
+
+
+# ------------------------------------------------------------------ paid generations survive a refresh
+
+class GenReq(BaseModel):
+    gen_id: str = Field(min_length=1, max_length=200)
+    polling_url: str = Field("", max_length=500)
+    page: str = Field(pattern="^(blessing|talk|frames)$")
+    model: str = Field("", max_length=120)
+    label: str = Field("", max_length=200)
+    prompt: str = Field("", max_length=3000)
+    title: str = Field("", max_length=300)
+    seconds: float = Field(0, ge=0, le=100000)
+    chunk: int = Field(0, ge=0, le=100)
+    chunks: int = Field(1, ge=1, le=100)
+    audio: str = Field("", max_length=100)
+    stitch: dict = Field(default_factory=dict)
+    inputs: list[str] = Field(default_factory=list, max_length=10)
+
+
+@app.post("/api/jobs/{job_id}/gens", dependencies=[Depends(require_auth)])
+def track_gen(job_id: str, req: GenReq):
+    """Remember a submitted (paid) OpenRouter generation, so it can be collected even if the page is closed."""
+    jobdir(job_id)
+    if not req.polling_url.startswith(("https://openrouter.ai/", "/api/v1/")) and req.polling_url:
+        raise HTTPException(400, "כתובת מעקב לא תקינה")
+    g = {**req.model_dump(), "status": "pending", "created": int(time.time())}
+    mutate(job_id, lambda s: s.setdefault("gens", {}).__setitem__(req.gen_id, g))
+    return g
+
+
+class GenDone(BaseModel):
+    status: str = Field(pattern="^(done|failed)$")
+    part: str = Field("", max_length=100)
+    error: str = Field("", max_length=500)
+
+
+@app.post("/api/jobs/{job_id}/gens/{gen_id}", dependencies=[Depends(require_auth)])
+def finish_gen(job_id: str, gen_id: str, req: GenDone):
+    def upd(s):
+        g = s.get("gens", {}).get(gen_id)
+        if g:
+            g.update(status=req.status, part=req.part, error=req.error, finished=int(time.time()))
+    mutate(job_id, upd)
+    return {"ok": True}
+
+
+@app.get("/api/gens/pending", dependencies=[Depends(require_auth)])
+def pending_gens():
+    """Paid generations that were never collected (page refreshed, phone locked...), newest first, last 3 days."""
+    cutoff = time.time() - 3 * 86400
+    out = [{**g, "job": st["id"]} for _, st in _jobs() for g in st.get("gens", {}).values()
+           if g.get("status") == "pending" and g.get("created", 0) > cutoff]
+    return {"items": sorted(out, key=lambda g: g["created"], reverse=True)}
 
 
 @app.get("/api/history", dependencies=[Depends(require_auth)])

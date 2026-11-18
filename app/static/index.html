@@ -464,6 +464,9 @@ async function genClip(model, imgUrl, audUrl, prompt, seconds, item) {
     const p2 = { ...payload, frame_images: [{ type: "image_url", image_url: { url: imgUrl }, frame_type: "first_frame" }], input_references: payload.input_references.slice(1) };
     try { job = await submit(p2); } catch (e2) { throw e; }
   }
+  // remember the paid job on the server right away, so a refresh or a locked phone can't lose it
+  (item.genIds = item.genIds || []).push(job.id);
+  if (item.track) window.Shell?.trackGen(S.job.id, { ...item.track, gen_id: job.id, polling_url: job.polling_url || "" });
   const poll = job.polling_url ? (job.polling_url.startsWith("http") ? job.polling_url : "https://openrouter.ai" + job.polling_url) : `${OR}/videos/${job.id}`;
   const deadline = Date.now() + 20 * 60 * 1000;
   let cur = job, status = job.status || "pending";
@@ -472,7 +475,7 @@ async function genClip(model, imgUrl, audUrl, prompt, seconds, item) {
     await sleep(5000);
     try { cur = await (await orFetch(poll)).json(); status = cur.status || status; item.provider_status = status; renderVideos(); } catch (e) { if (/401|402/.test(e.message)) throw e; }
   }
-  if (status !== "completed") throw new Error(`הפקת הווידאו נכשלה (${status}): ${cur.error || ""}`);
+  if (status !== "completed") { window.Shell?.genDone(S.job.id, job.id, "", "failed", String(cur.error || status)); throw new Error(`הפקת הווידאו נכשלה (${status}): ${cur.error || ""}`); }
   if (cur.usage?.cost != null) item.cost = (item.cost || 0) + cur.usage.cost;
   if (cur.urls?.length) return { url: cur.urls[0] };
   if (cur.unsigned_urls?.length) return { blob: await (await orFetch(cur.unsigned_urls[0])).blob() };
@@ -486,6 +489,8 @@ async function makeVideo(model, frame, audio, prompt, item) {
   const maxLen = +$("vsplit").value || 0;
   if (!(maxLen >= 4) || (audio.seconds || 0) <= maxLen + 0.5) {
     const [imgUrl, audUrl] = await Promise.all([mediaUrl(frame), mediaUrl(staged.name, audio.blob)]);
+    item.track = { page: "blessing", model, label: "קול: " + audio.model, prompt: audio.text, title: audio.text.slice(0, 80),
+                   seconds: audio.seconds || 0, chunk: 0, chunks: 1, inputs: [frame, staged.name] };
     const r = await genClip(model, imgUrl, audUrl, prompt, audio.seconds, item);
     try {  // OpenRouter's links expire: keep a copy on the server
       const pf = new FormData(); pf.append("seconds", 99999);
@@ -504,6 +509,8 @@ async function makeVideo(model, frame, audio, prompt, item) {
     for (let attempt = 0; attempt < 2 && !part; attempt++) {
       try {
         const [imgUrl, audUrl] = await Promise.all([mediaUrl(cur), mediaUrl(chunks[i].name)]);
+        item.track = { page: "blessing", model, label: "קול: " + audio.model, prompt: audio.text, title: audio.text.slice(0, 80),
+                       seconds: chunks[i].seconds, chunk: i, chunks: chunks.length, inputs: [frame, staged.name] };
         const r = await genClip(model, imgUrl, audUrl, prompt, chunks[i].seconds, item);
         const pf = new FormData(); pf.append("seconds", chunks[i].seconds);
         if (r.url) pf.append("url", r.url); else pf.append("file", r.blob, "part.mp4");
@@ -531,8 +538,11 @@ $("mk-video").onclick = async () => {
   S.videos.push(item); renderVideos(); $("mk-video").disabled = true;
   try {
     Object.assign(item, await makeVideo(item.model, frame, audio, $("vprompt").value.trim(), item), { status: "done" });
-    if (item.name) window.Shell?.record(S.job.id, { name: item.name, kind: "blessing", title: audio.text.slice(0, 80), model: item.model,
-      label: "קול: " + audio.model, prompt: audio.text, cost: item.cost ?? null, inputs: [frame, item.staged] });
+    if (item.name) {
+      await window.Shell?.record(S.job.id, { name: item.name, kind: "blessing", title: audio.text.slice(0, 80), model: item.model,
+        label: "קול: " + audio.model, prompt: audio.text, cost: item.cost ?? null, inputs: [frame, item.staged] });
+      for (const g of item.genIds || []) window.Shell?.genDone(S.job.id, g, item.name);
+    }
   }
   catch (e) { item.status = "error"; item.error = e.message; }
   $("mk-video").disabled = false; renderVideos();

@@ -127,6 +127,11 @@
     <div style="margin-top:14px"><button id="mk-video">הפק סרטון</button></div>
     <div class="error" id="videoerr"></div>
     <div id="videos"></div>
+    <details style="margin-top:14px"><summary style="cursor:pointer;color:var(--accent)">הפקה ששילמת עליה נעלמה? שחזור לפי מזהה מ-OpenRouter</summary>
+      <div class="note">מדביקים את מזהה ההפקה (או קישור שמכיל אותו) מעמוד ה-Logs ב-OpenRouter. הסרטון יורד בלי חיוב נוסף ונצרב עם הכתוביות והאודיו שהועלו כאן.</div>
+      <div class="row" style="margin-top:8px"><div><input type="text" id="rec-id" dir="ltr" placeholder="gen-... או https://openrouter.ai/..."></div><button class="ghost" id="rec-btn" type="button">שחזר</button></div>
+      <div class="error" id="recerr"></div>
+    </details>
   </section>
 
   <section id="s-clean" class="hidden">
@@ -342,6 +347,9 @@ async function genClip(model, imgUrl, audUrl, prompt, seconds, item) {
     catch (e) { firstErr = firstErr || e; if (/401|402/.test(e.message)) throw e; }
   }
   if (!job) throw firstErr;
+  // remember the paid job on the server right away, so a refresh or a locked phone can't lose it
+  (item.genIds = item.genIds || []).push(job.id);
+  if (item.track) window.Shell?.trackGen(S.job.id, { ...item.track, gen_id: job.id, polling_url: job.polling_url || "" });
   const poll = job.polling_url ? (job.polling_url.startsWith("http") ? job.polling_url : "https://openrouter.ai" + job.polling_url) : `${OR}/videos/${job.id}`;
   const deadline = Date.now() + 20 * 60 * 1000;
   let cur = job, status = job.status || "pending";
@@ -350,7 +358,7 @@ async function genClip(model, imgUrl, audUrl, prompt, seconds, item) {
     await sleep(5000);
     try { cur = await (await orFetch(poll)).json(); status = cur.status || status; item.provider_status = status; renderVideos(); } catch (e) { if (/401|402/.test(e.message)) throw e; }
   }
-  if (status !== "completed") throw new Error(`הפקת הווידאו נכשלה (${status}): ${cur.error || ""}`);
+  if (status !== "completed") { window.Shell?.genDone(S.job.id, job.id, "", "failed", String(cur.error || status)); throw new Error(`הפקת הווידאו נכשלה (${status}): ${cur.error || ""}`); }
   if (cur.usage?.cost != null) item.cost = (item.cost || 0) + cur.usage.cost;
   if (cur.urls?.length) return { url: cur.urls[0] };
   if (cur.unsigned_urls?.length) return { blob: await (await orFetch(cur.unsigned_urls[0])).blob() };
@@ -370,6 +378,9 @@ async function makeVideo(model, prompt, opts, item) {
     for (let attempt = 0; attempt < 2 && !part; attempt++) {
       try {
         const [imgUrl, audUrl] = await Promise.all([mediaUrl(frame), mediaUrl(chunks[i].name)]);
+        item.track = { page: "talk", model, label: item.label, prompt, title: (S.job.filename || "תמונה מדברת").replace(/\.[^.]+$/, ""),
+                       seconds: chunks[i].seconds, chunk: i, chunks: chunks.length, audio: S.job.audio, stitch: opts,
+                       inputs: [S.job.frames[0].name, S.job.audio, S.job.subs] };
         const r = await genClip(model, imgUrl, audUrl, prompt, chunks[i].seconds, item);
         const pf = new FormData(); pf.append("seconds", chunks[i].seconds);
         if (r.url) pf.append("url", r.url); else pf.append("file", r.blob, "part.mp4");
@@ -412,6 +423,22 @@ function onModel() {
 }
 $("vidmodel").onchange = onModel;
 
+$("rec-btn").onclick = async () => {
+  $("recerr").textContent = "";
+  const raw = $("rec-id").value.trim();
+  const id = (raw.match(/videos\/([^/?#\s]+)/) || raw.match(/([A-Za-z0-9_-]{8,})\s*$/) || [])[1];
+  if (!id) { $("recerr").textContent = "לא זיהיתי מזהה. הדבק את המזהה או קישור שמכיל אותו"; return; }
+  if (!getKey()) { $("recerr").textContent = "הזן מפתח OpenRouter בראש הדף"; return; }
+  if (!S.job) { $("recerr").textContent = "קודם צריך את הקבצים (סעיף 1), כדי לצרוב את הכתוביות"; return; }
+  const g = { gen_id: id, polling_url: "", page: "talk", model: "", label: subLabel(subOpts()), prompt: "", seconds: S.job.duration, chunk: 0, chunks: 1,
+              audio: S.job.audio, stitch: subOpts(), title: (S.job.filename || "תמונה מדברת").replace(/\.[^.]+$/, ""),
+              inputs: [S.job.frames[0].name, S.job.audio, S.job.subs] };
+  $("rec-btn").disabled = true;
+  await window.Shell?.trackGen(S.job.id, g);
+  await window.Shell?.collect({ ...g, job: S.job.id, created: Math.floor(Date.now() / 1000) });
+  $("rec-btn").disabled = false;
+};
+
 // live list: every OpenRouter video model that takes an image and audio, so new ones show up by themselves
 async function loadModels() {
   S.vinfo = {};
@@ -445,7 +472,8 @@ $("mk-video").onclick = async () => {
   S.videos.push(item); renderVideos(); $("mk-video").disabled = true;
   try {
     Object.assign(item, await makeVideo(item.model, $("vprompt").value.trim(), opts, item), { status: "done" }); saveVids();
-    recordTalk(item, $("vprompt").value.trim());
+    await recordTalk(item, $("vprompt").value.trim());
+    for (const g of item.genIds || []) window.Shell?.genDone(S.job.id, g, item.name);
   }
   catch (e) { item.status = "error"; item.error = e.message; }
   $("mk-video").disabled = false; renderVideos();
@@ -453,7 +481,7 @@ $("mk-video").onclick = async () => {
 
 function recordTalk(item, prompt) {
   item.prompt = prompt;
-  window.Shell?.record(S.job.id, { name: item.name, kind: "talk", title: (S.job.filename || "תמונה מדברת").replace(/\.[^.]+$/, ""),
+  return window.Shell?.record(S.job.id, { name: item.name, kind: "talk", title: (S.job.filename || "תמונה מדברת").replace(/\.[^.]+$/, ""),
     model: item.model, label: item.label, prompt, cost: item.cost ?? null, inputs: [S.job.frames[0].name, S.job.audio, S.job.subs] });
 }
 

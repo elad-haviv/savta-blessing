@@ -122,13 +122,89 @@
     document.body.appendChild(v);
   }
 
-  // pages call this after a video is finished and saved on the server
+  const postJSON = (u, body) => fetch(u, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
   window.Shell = {
+    // after a video is finished and saved on the server
     async record(job, entry) {
       try {
-        const r = await fetch(`/api/jobs/${job}/record`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(entry) });
+        const r = await postJSON(`/api/jobs/${job}/record`, entry);
         if (r.ok && dr.classList.contains("open")) load();
       } catch (e) { /* history is best-effort; the video itself is already saved */ }
     },
+    // right after a paid generation is submitted: if the page dies before the video is saved, it can be collected later
+    async trackGen(job, g) { try { await postJSON(`/api/jobs/${job}/gens`, g); } catch (e) {} },
+    async genDone(job, genId, part = "", status = "done", error = "") {
+      try { await postJSON(`/api/jobs/${job}/gens/${encodeURIComponent(genId)}`, { status, part, error }); } catch (e) {}
+    },
   };
+
+  // ---------------------------------------------------------------- collect paid generations that were cut off
+  document.head.insertAdjacentHTML("beforeend", `<style>
+    .sh-rs { position:fixed; left:12px; right:12px; bottom:12px; z-index:45; display:flex; flex-direction:column; gap:8px; pointer-events:none; }
+    .sh-rs div { pointer-events:auto; background:#2b2420; color:#fff; border-radius:12px; padding:10px 14px; font-size:14px; box-shadow:0 6px 20px rgba(0,0,0,.2); max-width:560px; margin:0 auto; width:100%; }
+    .sh-rs a { color:#ffcf9e; cursor:pointer; text-decoration:underline; }
+  </style>`);
+  const rs = document.createElement("div"); rs.className = "sh-rs"; document.body.appendChild(rs);
+  function note(id, html, sticky) {
+    let el = document.getElementById("sh-n-" + id);
+    if (!el) { el = document.createElement("div"); el.id = "sh-n-" + id; rs.appendChild(el); }
+    el.innerHTML = html;
+    el.querySelector("[data-open]")?.addEventListener("click", () => { el.remove(); open(); });
+    if (!sticky) setTimeout(() => el.remove(), 15000);
+  }
+  const getKey = () => { try { return localStorage.getItem("savta_or_key") || sessionStorage.getItem("savta_or_key") || ""; } catch (e) { return ""; } };
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const label = { blessing: "ברכה", talk: "תמונה מדברת", frames: "סרטון מתמונות" };
+
+  async function collect(g) {
+    const key = getKey(), id = g.gen_id.slice(-8), what = `${label[g.page]} (${when(g.created)})`;
+    const auth = { Authorization: `Bearer ${key}` };
+    const poll = g.polling_url ? (g.polling_url.startsWith("http") ? g.polling_url : "https://openrouter.ai" + g.polling_url) : `https://openrouter.ai/api/v1/videos/${g.gen_id}`;
+    note(id, `נמצאה הפקה ששולמה ולא נשמרה: ${esc(what)}. אוסף אותה מ-OpenRouter בלי חיוב נוסף...`, true);
+    try {
+      let cur, deadline = Date.now() + 30 * 60 * 1000;
+      for (;;) {
+        const r = await fetch(poll, { headers: auth });
+        if (r.status === 404) throw new Error("OpenRouter כבר לא מחזיק את ההפקה הזו");
+        if (!r.ok) throw new Error(`OpenRouter ${r.status}`);
+        cur = await r.json();
+        if (cur.status === "completed") break;
+        if (["failed", "cancelled", "expired"].includes(cur.status)) throw new Error(`ההפקה ${cur.status === "expired" ? "פגה" : "נכשלה"} ב-OpenRouter`);
+        if (Date.now() > deadline) throw new Error("ההפקה עדיין לא הסתיימה. רענן מאוחר יותר");
+        await sleep(5000);
+      }
+      const pf = new FormData(); pf.append("seconds", g.seconds || 99999);
+      if (cur.urls?.length) pf.append("url", cur.urls[0]);
+      else if (cur.unsigned_urls?.length) {
+        const v = await fetch(cur.unsigned_urls[0], { headers: auth }); if (!v.ok) throw new Error("הורדת הסרטון מ-OpenRouter נכשלה");
+        pf.append("file", await v.blob(), "video.mp4");
+      } else throw new Error("OpenRouter לא החזיר קישור לסרטון");
+      let r = await fetch(`/api/jobs/${g.job}/part`, { method: "POST", body: pf });
+      if (!r.ok) throw new Error("שמירת הסרטון בשרת נכשלה");
+      const part = await r.json();
+      let name = part.name, lbl = g.label;
+      if (g.page === "talk" && g.chunks === 1 && g.audio) {  // finish the job the page would have done: join + subtitles
+        r = await postJSON(`/api/jobs/${g.job}/stitch`, { parts: [{ name: part.name, seconds: g.seconds }], audio: g.audio, ...(g.stitch || {}) });
+        if (r.ok) name = (await r.json()).name; else lbl += " · בלי כתוביות";
+      } else if (g.chunks > 1) lbl = `${lbl} · קטע ${g.chunk + 1} מתוך ${g.chunks}`;
+      await Shell.record(g.job, { name, kind: g.page, title: g.title || "הפקה ששוחזרה", model: g.model, label: (lbl ? lbl + " · " : "") + "שוחזר",
+                                  prompt: g.prompt, cost: cur.usage?.cost ?? null, inputs: g.inputs || [] });
+      await Shell.genDone(g.job, g.gen_id, name);
+      note(id, `ההפקה ${esc(what)} נשמרה. <a data-open>פתח בהיסטוריה</a>`, true);
+    } catch (e) {
+      if (!/עדיין לא הסתיימה/.test(e.message)) await Shell.genDone(g.job, g.gen_id, "", "failed", e.message);
+      note(id, `לא הצלחתי לשחזר את ${esc(what)}: ${esc(e.message)}`, true);
+    }
+  }
+  Shell.collect = collect;
+  (async function resumePending() {
+    try {
+      const r = await fetch("/api/gens/pending"); if (!r.ok) return;
+      const items = (await r.json()).items || [];
+      if (!items.length) return;
+      if (!getKey()) { note("key", `יש ${items.length} הפקות ששולמו ולא נשמרו. הזן מפתח OpenRouter ורענן כדי לאסוף אותן.`, true); return; }
+      for (const g of items) await collect(g);
+    } catch (e) {}
+  })();
 })();
