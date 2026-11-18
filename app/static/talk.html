@@ -33,6 +33,8 @@
   .pick.over { border-color: var(--accent); color: var(--accent); }
   .pick.set { border-style:solid; border-color: var(--accent); color: var(--ink); }
   .pick b { color: var(--ink); }
+  .pick .pc { display:flex; flex-direction:column; align-items:center; gap:6px; }
+  .pick .paste { align-self:center; margin-top:6px; }
   .pick img { max-width:100%; max-height:160px; border-radius:8px; object-fit:contain; }
   .pick small { word-break: break-all; }
   .bar { height:8px; background:var(--line); border-radius:6px; overflow:hidden; margin-top:10px; }
@@ -72,13 +74,15 @@
   <section id="s-upload">
     <h2>1. שלושת הקבצים</h2>
     <div class="picks">
-      <div class="pick" id="p-image" data-kind="image"><b>תמונה</b><span>jpg, png, webp, heic</span></div>
-      <div class="pick" id="p-audio" data-kind="audio"><b>אודיו</b><span>mp3, wav, m4a ועוד (או וידאו, ממנו נלקח הקול)</span></div>
-      <div class="pick" id="p-subs" data-kind="subs"><b>כתוביות</b><span>srt, vtt, ass</span></div>
+      <div class="pick" id="p-image"><div class="pc"><b>תמונה</b><span>jpg, png, webp, heic</span></div><button class="ghost small paste" type="button" data-paste="image">הדבק מהלוח</button></div>
+      <div class="pick" id="p-audio"><div class="pc"><b>אודיו</b><span>mp3, wav, m4a ועוד (או וידאו, ממנו נלקח הקול)</span></div><button class="ghost small paste" type="button" data-paste="audio">הדבק מהלוח</button></div>
+      <div class="pick" id="p-subs"><div class="pc"><b>כתוביות</b><span>srt, vtt, ass (קובץ, או הדבקת הטקסט)</span></div><button class="ghost small paste" type="button" data-paste="subs">הדבק מהלוח</button></div>
     </div>
     <input type="file" id="f-image" accept="image/*,.heic,.heif" class="hidden">
     <input type="file" id="f-audio" accept="audio/*,video/*,.m4a,.opus,.amr" class="hidden">
-    <input type="file" id="f-subs" accept=".srt,.vtt,.ass,.ssa" class="hidden">
+    <!-- no accept filter: iPhone greys out .srt/.vtt/.ass because it doesn't know those types; the server checks the extension -->
+    <input type="file" id="f-subs" class="hidden">
+    <div class="error" id="pasteerr"></div>
     <div style="margin-top:14px"><button id="up-btn" disabled>העלה והכן</button></div>
     <div class="bar hidden" id="upbar"><i></i></div>
     <div class="status" id="upstatus"></div>
@@ -93,7 +97,8 @@
         <div id="r-info"></div>
         <audio controls id="r-audio"></audio>
         <div style="margin-top:10px"><button class="ghost small" id="subs-btn" type="button">החלף קובץ כתוביות</button>
-          <input type="file" id="f-subs2" accept=".srt,.vtt,.ass,.ssa" class="hidden"> <span class="status" id="subs-status"></span></div>
+          <button class="ghost small" id="subs-paste" type="button">הדבק כתוביות מהלוח</button>
+          <input type="file" id="f-subs2" class="hidden"> <span class="status" id="subs-status"></span></div>
         <div class="error" id="subserr"></div>
       </div>
     </div>
@@ -102,8 +107,11 @@
 
   <section id="s-video" class="hidden">
     <h2>3. הסרטון</h2>
+    <label>מודל וידאו (כל המודלים ב-OpenRouter שמקבלים תמונה ואודיו)</label>
+    <select id="vidmodel"><option>טוען רשימת מודלים...</option></select>
+    <div class="note" id="vinfo"></div>
     <div class="row">
-      <div><label>מודל וידאו</label><select id="vidmodel"></select></div>
+      <div id="vres-wrap"><label>רזולוציה</label><select id="vres"></select></div>
       <div><label>פיצול לקטעים: אורך מרבי בשניות (0 = בלי)</label><input type="number" id="vsplit" min="0" max="120" step="1" value="0"></div>
     </div>
     <label>הנחיית תנועה (אופציונלי, באנגלית עובד הכי טוב)</label>
@@ -133,7 +141,7 @@ const OR = "https://openrouter.ai/api/v1";
 const KEY_NAME = "savta_or_key";
 const JOB_KEY = "savta_talk_job";
 
-let S = { job: null, cfg: null, files: {}, videos: [] };
+let S = { job: null, cfg: null, files: {}, videos: [], vinfo: {} };
 
 // ================================================================ key (BYOK, shared with the main page)
 function getKey() { try { return localStorage.getItem(KEY_NAME) || sessionStorage.getItem(KEY_NAME) || ""; } catch (e) { return ""; } }
@@ -193,12 +201,49 @@ function setFile(kind, file) {
   const box = $("p-" + kind);
   box.classList.add("set");
   const preview = kind === "image" && file.type.startsWith("image/") ? `<img src="${URL.createObjectURL(file)}" alt="">` : "";
-  box.innerHTML = `<b>${LABELS[kind]}</b>${preview}<small>${esc(file.name)}</small><span>לחץ להחלפה</span>`;
+  box.querySelector(".pc").innerHTML = `<b>${LABELS[kind]}</b>${preview}<small>${esc(file.name)}</small><span>לחץ להחלפה</span>`;
   $("up-btn").disabled = !(S.files.image && S.files.audio && S.files.subs);
 }
+
+// ---------------------------------------------------------------- clipboard
+const EXT = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/heic": "heic", "image/gif": "png",
+              "audio/mpeg": "mp3", "audio/mp3": "mp3", "audio/wav": "wav", "audio/x-wav": "wav", "audio/wave": "wav",
+              "audio/mp4": "m4a", "audio/x-m4a": "m4a", "audio/aac": "aac", "audio/ogg": "ogg", "audio/webm": "ogg", "audio/flac": "flac" };
+function subsFromText(t) {
+  t = (t || "").trim();
+  if (!/-->/.test(t) && !/^\[Script Info\]/i.test(t)) throw new Error("בלוח אין טקסט כתוביות (צריך שורות זמן כמו 00:00:01,000 --> 00:00:03,000)");
+  const ext = /^﻿?WEBVTT/.test(t) ? "vtt" : /^\[Script Info\]/i.test(t) ? "ass" : "srt";
+  return new File([t + "\n"], `pasted.${ext}`, { type: "text/plain" });
+}
+async function readClipboard(kind) {
+  if (!navigator.clipboard) throw new Error("הדפדפן לא מאפשר גישה ללוח בעמוד הזה");
+  if (kind === "subs") return subsFromText(await navigator.clipboard.readText());
+  if (!navigator.clipboard.read) throw new Error("הדפדפן הזה לא תומך בהדבקת קבצים מהלוח. אפשר לבחור קובץ");
+  const want = kind === "image" ? "image/" : "audio/";
+  for (const it of await navigator.clipboard.read()) {
+    const type = it.types.find(t => t.startsWith(want));
+    if (type) return new File([await it.getType(type)], `pasted.${EXT[type] || (kind === "image" ? "png" : "mp3")}`, { type });
+  }
+  throw new Error(kind === "image" ? "בלוח אין תמונה. העתק תמונה (לחיצה ארוכה ← העתק) ונסה שוב" : "בלוח אין קובץ אודיו. ברוב המכשירים אי אפשר להעתיק אודיו ללוח, אז עדיף לבחור קובץ");
+}
+async function pasteInto(kind) {
+  $("pasteerr").textContent = "";
+  try { setFile(kind, await readClipboard(kind)); }
+  catch (e) { $("pasteerr").textContent = e.name === "NotAllowedError" ? "הגישה ללוח נחסמה. אשר את ההדבקה כשהדפדפן שואל ונסה שוב" : e.message; }
+}
+// Ctrl/Cmd+V anywhere on the page (desktop): an image goes to the picture, subtitle text to the subtitles
+document.addEventListener("paste", e => {
+  if (e.target.closest("input, textarea")) return;
+  const f = [...(e.clipboardData?.files || [])][0];
+  if (f && f.type.startsWith("image/")) { setFile("image", f); e.preventDefault(); return; }
+  if (f && f.type.startsWith("audio/")) { setFile("audio", f); e.preventDefault(); return; }
+  const t = e.clipboardData?.getData("text");
+  if (t && /-->/.test(t)) { try { setFile("subs", subsFromText(t)); e.preventDefault(); } catch (x) {} }
+});
+
 for (const kind of ["image", "audio", "subs"]) {
   const box = $("p-" + kind), input = $("f-" + kind);
-  box.onclick = () => input.click();
+  box.onclick = e => { if (e.target.closest(".paste")) pasteInto(kind); else input.click(); };
   box.ondragover = e => { e.preventDefault(); box.classList.add("over"); };
   box.ondragleave = () => box.classList.remove("over");
   box.ondrop = e => { e.preventDefault(); box.classList.remove("over"); setFile(kind, e.dataTransfer.files[0]); };
@@ -241,8 +286,13 @@ function render() {
 }
 
 $("subs-btn").onclick = () => $("f-subs2").click();
-$("f-subs2").onchange = async e => {
-  const file = e.target.files[0]; e.target.value = ""; if (!file) return;
+$("f-subs2").onchange = e => { const file = e.target.files[0]; e.target.value = ""; if (file) replaceSubs(file); };
+$("subs-paste").onclick = async () => {
+  $("subserr").textContent = "";
+  try { replaceSubs(subsFromText(await navigator.clipboard.readText())); }
+  catch (e) { $("subserr").textContent = e.name === "NotAllowedError" ? "הגישה ללוח נחסמה. אשר את ההדבקה ונסה שוב" : e.message; }
+};
+async function replaceSubs(file) {
   $("subserr").textContent = ""; $("subs-status").textContent = "מעלה...";
   const fd = new FormData(); fd.append("subs", file);
   try { S.job = await api(`/api/jobs/${S.job.id}/subs`, { method: "POST", body: fd }); $("subs-status").textContent = "הוחלף."; render(); }
@@ -265,8 +315,10 @@ async function mediaUrl(name) {
 async function genClip(model, imgUrl, audUrl, prompt, seconds, item) {
   const payload = { model, input_references: [{ type: "image_url", image_url: { url: imgUrl } }, { type: "audio_url", audio_url: { url: audUrl } }] };
   if (prompt) payload.prompt = prompt;
+  const info = S.vinfo[model] || {};
+  if (info.res && $("vres").value) payload.resolution = $("vres").value;
   if (!model.startsWith("heygen/")) {
-    payload.duration = Math.max(1, Math.ceil(seconds || 5));
+    payload.duration = pickDuration(info.durs, seconds);
     if (!prompt) payload.prompt = "The person in the photo speaks to the camera with natural lip-sync, gentle head movement and natural expressions.";
   }
   const submit = p => orFetch("/videos", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(p) }).then(r => r.json());
@@ -321,7 +373,47 @@ async function makeVideo(model, prompt, opts, item) {
   return { href: fileUrl(fin.name) };
 }
 
-$("vidmodel").onchange = () => { $("vsplit").value = $("vidmodel").value.includes("seedance") ? 14 : 0; };
+// the shortest duration the model supports that still covers the audio (longer audio gets split, see vsplit)
+function pickDuration(durs, seconds) {
+  const need = Math.max(1, Math.ceil(seconds || 5));
+  const ok = (durs || []).filter(d => d > 0).sort((a, b) => a - b);
+  if (!ok.length) return need;
+  return ok.find(d => d >= need) ?? ok[ok.length - 1];
+}
+function onModel() {
+  const id = $("vidmodel").value, info = S.vinfo[id] || {};
+  const max = Math.max(0, ...(info.durs || []).filter(d => d > 0));
+  // heygen avatars take the whole audio; other models are capped at their longest duration, so split above that
+  $("vsplit").value = id.startsWith("heygen/") || !max ? 0 : max;
+  $("vres-wrap").classList.toggle("hidden", !info.res);
+  if (info.res) {
+    $("vres").innerHTML = info.res.map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join("");
+    $("vres").value = info.res.includes("1080p") ? "1080p" : info.res.includes("720p") ? "720p" : info.res[0];
+  }
+  $("vinfo").textContent = (info.desc || "").slice(0, 200);
+}
+$("vidmodel").onchange = onModel;
+
+// live list: every OpenRouter video model that takes an image and audio, so new ones show up by themselves
+async function loadModels() {
+  S.vinfo = {};
+  let list = [];
+  try {
+    const [all, vids] = await Promise.all([
+      fetch(OR + "/models?output_modalities=video").then(r => r.ok ? r.json() : Promise.reject(r.status)),
+      fetch(OR + "/videos/models").then(r => r.ok ? r.json() : { data: [] }).catch(() => ({ data: [] }))]);
+    const caps = Object.fromEntries((vids.data || []).map(m => [m.id, m]));
+    list = (all.data || []).filter(m => { const im = m.architecture?.input_modalities || []; return im.includes("image") && im.includes("audio"); })
+      .map(m => ({ id: m.id, label: m.name || m.id, desc: m.description,
+                   durs: caps[m.id]?.supported_durations || null, res: caps[m.id]?.supported_resolutions || null }))
+      .sort((a, b) => b.id.startsWith("heygen/") - a.id.startsWith("heygen/") || a.label.localeCompare(b.label));
+  } catch (e) { list = []; }
+  if (!list.length) list = S.cfg.video_models.map(m => ({ ...m }));  // fallback: the server's short list
+  for (const m of list) S.vinfo[m.id] = m;
+  $("vidmodel").innerHTML = list.map(m => `<option value="${esc(m.id)}">${esc(m.label)}</option>`).join("");
+  if (S.vinfo["heygen/avatar-iv"]) $("vidmodel").value = "heygen/avatar-iv";
+  onModel();
+}
 $("mk-video").onclick = async () => {
   $("videoerr").textContent = "";
   if (!getKey()) { $("videoerr").textContent = "הזן מפתח OpenRouter בראש הדף"; return; }
@@ -367,7 +459,7 @@ $("del-job").onclick = async () => {
 (async function init() {
   renderKey();
   S.cfg = await api("/api/config");
-  $("vidmodel").innerHTML = S.cfg.video_models.map(m => `<option value="${esc(m.id)}">${esc(m.label)}</option>`).join("");
+  await loadModels();
   $("nopub").classList.toggle("hidden", S.cfg.public_url_set);
   let saved = null; try { saved = localStorage.getItem(JOB_KEY); } catch (e) {}
   if (!saved) return;

@@ -35,6 +35,8 @@
   .pick.over { border-color: var(--accent); color: var(--accent); }
   .pick.set { border-style:solid; border-color: var(--accent); color: var(--ink); }
   .pick b { color: var(--ink); }
+  .pick .pc { display:flex; flex-direction:column; align-items:center; gap:6px; }
+  .pick .paste { margin-top:6px; }
   .pick img { max-width:100%; max-height:200px; border-radius:8px; object-fit:contain; }
   .status { margin-top:10px; color:var(--muted); }
   .error { color:var(--err); margin-top:8px; white-space: pre-wrap; }
@@ -69,9 +71,10 @@
   <section>
     <h2>1. התמונות והתיאור</h2>
     <div class="picks">
-      <div class="pick" id="p-start"><b>תמונת התחלה</b><span>גרור לכאן או לחץ לבחירה</span></div>
-      <div class="pick" id="p-end"><b>תמונת סיום (לא חובה)</b><span>גרור לכאן או לחץ לבחירה</span></div>
+      <div class="pick" id="p-start"><div class="pc"><b>תמונת התחלה</b><span>גרור לכאן או לחץ לבחירה</span></div><button class="ghost small paste" type="button">הדבק מהלוח</button></div>
+      <div class="pick" id="p-end"><div class="pc"><b>תמונת סיום (לא חובה)</b><span>גרור לכאן או לחץ לבחירה</span></div><button class="ghost small paste" type="button">הדבק מהלוח</button></div>
     </div>
+    <div class="error" id="pasteerr"></div>
     <input type="file" id="f-start" accept="image/*,.heic,.heif" class="hidden">
     <input type="file" id="f-end" accept="image/*,.heic,.heif" class="hidden">
     <div id="end-clear-wrap" class="hidden" style="margin-top:8px"><button class="ghost small" id="end-clear" type="button">הסר את תמונת הסיום</button></div>
@@ -165,15 +168,33 @@ function setImage(role, file) {
   S.files[role] = file || null;
   const box = $("p-" + role), title = role === "start" ? "תמונת התחלה" : "תמונת סיום (לא חובה)";
   box.classList.toggle("set", !!file);
-  box.innerHTML = file
+  box.querySelector(".pc").innerHTML = file
     ? `<b>${title}</b><img src="${URL.createObjectURL(file)}" alt=""><span>לחץ להחלפה</span>`
     : `<b>${title}</b><span>גרור לכאן או לחץ לבחירה</span>`;
   $("end-clear-wrap").classList.toggle("hidden", !S.files.end);
   renderModels();
 }
+const EXT = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/heic": "heic", "image/gif": "png" };
+async function pasteImage(role) {
+  $("pasteerr").textContent = "";
+  try {
+    if (!navigator.clipboard?.read) throw new Error("הדפדפן הזה לא תומך בהדבקת תמונות מהלוח. אפשר לבחור קובץ");
+    for (const it of await navigator.clipboard.read()) {
+      const type = it.types.find(t => t.startsWith("image/"));
+      if (type) { setImage(role, new File([await it.getType(type)], `pasted-${role}.${EXT[type] || "png"}`, { type })); return; }
+    }
+    throw new Error("בלוח אין תמונה. העתק תמונה (לחיצה ארוכה ← העתק) ונסה שוב");
+  } catch (e) { $("pasteerr").textContent = e.name === "NotAllowedError" ? "הגישה ללוח נחסמה. אשר את ההדבקה כשהדפדפן שואל ונסה שוב" : e.message; }
+}
+// Ctrl/Cmd+V on the page (desktop): fills the start image, or the end image once a start image is set
+document.addEventListener("paste", e => {
+  if (e.target.closest("input, textarea")) return;
+  const f = [...(e.clipboardData?.files || [])].find(x => x.type.startsWith("image/"));
+  if (f) { setImage(S.files.start ? "end" : "start", f); e.preventDefault(); }
+});
 for (const role of ["start", "end"]) {
   const box = $("p-" + role), input = $("f-" + role);
-  box.onclick = () => input.click();
+  box.onclick = e => { if (e.target.closest(".paste")) pasteImage(role); else input.click(); };
   box.ondragover = e => { e.preventDefault(); box.classList.add("over"); };
   box.ondragleave = () => box.classList.remove("over");
   box.ondrop = e => { e.preventDefault(); box.classList.remove("over"); if (e.dataTransfer.files[0]) setImage(role, e.dataTransfer.files[0]); };
