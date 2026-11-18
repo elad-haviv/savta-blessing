@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>תמונה מדברת</title>
+<style>
+  :root { --bg:#faf6f0; --card:#fff; --ink:#2b2420; --muted:#8a7f76; --accent:#b4572d; --line:#e8dfd3; --ok:#2e7d4f; --err:#b3261e; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family: "Segoe UI", Arial, sans-serif; line-height:1.55; }
+  main { max-width: 860px; margin: 0 auto; padding: 24px 16px 80px; }
+  h1 { font-size: 26px; margin: 8px 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .sub a, .note a { color: var(--accent); }
+  section { background: var(--card); border:1px solid var(--line); border-radius: 14px; padding: 18px 20px; margin-bottom: 18px; }
+  section h2 { font-size: 17px; margin: 0 0 12px; }
+  .hidden { display:none !important; }
+  button { background: var(--accent); color:#fff; border:0; border-radius:10px; padding: 10px 18px; font-size:15px; cursor:pointer; font-family:inherit; }
+  button:disabled { opacity:.5; cursor:default; }
+  button.ghost { background:transparent; color:var(--accent); border:1px solid var(--accent); }
+  button.small { padding:5px 12px; font-size:13px; }
+  input[type=text], input[type=password], input[type=number], select { width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:9px; font: inherit; background:#fff; color:inherit; }
+  input[type=password] { direction:ltr; text-align:left; }
+  label { display:block; font-size:14px; color:var(--muted); margin: 12px 0 4px; }
+  label.inline { display:flex; gap:8px; align-items:center; margin-top:10px; color:var(--ink); }
+  label.inline input { width:auto; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; }
+  .row > * { flex:1; min-width: 140px; }
+  .row > button { flex:0 0 auto; }
+  .picks { display:grid; grid-template-columns: repeat(auto-fit, minmax(220px,1fr)); gap:12px; }
+  .pick { border:2px dashed var(--line); border-radius:12px; padding:16px; text-align:center; color:var(--muted); cursor:pointer; min-height:120px; display:flex; flex-direction:column; justify-content:center; gap:6px; }
+  .pick.over { border-color: var(--accent); color: var(--accent); }
+  .pick.set { border-style:solid; border-color: var(--accent); color: var(--ink); }
+  .pick b { color: var(--ink); }
+  .pick img { max-width:100%; max-height:160px; border-radius:8px; object-fit:contain; }
+  .pick small { word-break: break-all; }
+  .bar { height:8px; background:var(--line); border-radius:6px; overflow:hidden; margin-top:10px; }
+  .bar > i { display:block; height:100%; width:0; background:var(--accent); transition: width .2s; }
+  .status { margin-top:10px; color:var(--muted); }
+  .error { color:var(--err); margin-top:8px; white-space: pre-wrap; }
+  .ready { display:flex; gap:16px; flex-wrap:wrap; align-items:flex-start; }
+  .ready img { width:180px; border-radius:10px; }
+  .ready > div { flex:1; min-width:220px; }
+  .item { border-top:1px solid var(--line); padding:12px 0; }
+  .item:first-of-type { border-top:0; }
+  audio, video { width:100%; margin-top:8px; border-radius:10px; }
+  .tag { font-size:12px; background:#f4ece1; border-radius:6px; padding:2px 8px; color:var(--muted); }
+  .warn { background:#fff4e0; border:1px solid #f0d9a8; border-radius:10px; padding:10px 12px; font-size:14px; margin-top:10px; }
+  .okbox { background:#eaf6ee; border:1px solid #b9dcc5; border-radius:10px; padding:10px 12px; font-size:14px; }
+  .note { font-size:13px; color:var(--muted); margin-top:8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>תמונה מדברת</h1>
+  <p class="sub">תמונה, אודיו מוכן וקובץ כתוביות, ויוצא סרטון שבו הדמות מדברת עם הכתוביות צרובות. <a href="/">חזרה לברכת סבתא</a></p>
+
+  <section id="s-key">
+    <h2>מפתח OpenRouter שלך</h2>
+    <div id="key-form">
+      <div class="row">
+        <div><input type="password" id="keyin" placeholder="sk-or-v1-..." autocomplete="off" spellcheck="false"></div>
+        <button id="key-save">שמור</button>
+      </div>
+      <label class="inline"><input type="checkbox" id="key-remember" checked> זכור בדפדפן הזה (אחרת רק עד סגירת הלשונית)</label>
+    </div>
+    <div id="key-ok" class="okbox hidden"></div>
+    <p class="note">אותו מפתח כמו בעמוד הראשי. הוא נשמר רק בדפדפן שלך ונשלח רק אל openrouter.ai, לא לשרת הזה.</p>
+  </section>
+
+  <section id="s-upload">
+    <h2>1. שלושת הקבצים</h2>
+    <div class="picks">
+      <div class="pick" id="p-image" data-kind="image"><b>תמונה</b><span>jpg, png, webp, heic</span></div>
+      <div class="pick" id="p-audio" data-kind="audio"><b>אודיו</b><span>mp3, wav, m4a ועוד (או וידאו, ממנו נלקח הקול)</span></div>
+      <div class="pick" id="p-subs" data-kind="subs"><b>כתוביות</b><span>srt, vtt, ass</span></div>
+    </div>
+    <input type="file" id="f-image" accept="image/*,.heic,.heif" class="hidden">
+    <input type="file" id="f-audio" accept="audio/*,video/*,.m4a,.opus,.amr" class="hidden">
+    <input type="file" id="f-subs" accept=".srt,.vtt,.ass,.ssa" class="hidden">
+    <div style="margin-top:14px"><button id="up-btn" disabled>העלה והכן</button></div>
+    <div class="bar hidden" id="upbar"><i></i></div>
+    <div class="status" id="upstatus"></div>
+    <div class="error" id="uperr"></div>
+  </section>
+
+  <section id="s-ready" class="hidden">
+    <h2>2. מה הועלה</h2>
+    <div class="ready">
+      <img id="r-img" alt="">
+      <div>
+        <div id="r-info"></div>
+        <audio controls id="r-audio"></audio>
+        <div style="margin-top:10px"><button class="ghost small" id="subs-btn" type="button">החלף קובץ כתוביות</button>
+          <input type="file" id="f-subs2" accept=".srt,.vtt,.ass,.ssa" class="hidden"> <span class="status" id="subs-status"></span></div>
+        <div class="error" id="subserr"></div>
+      </div>
+    </div>
+    <p class="note">אחרי החלפת כתוביות אפשר לצרוב מחדש סרטון שכבר הופק, בלי להפיק אותו שוב ובלי עלות.</p>
+  </section>
+
+  <section id="s-video" class="hidden">
+    <h2>3. הסרטון</h2>
+    <div class="row">
+      <div><label>מודל וידאו</label><select id="vidmodel"></select></div>
+      <div><label>פיצול לקטעים: אורך מרבי בשניות (0 = בלי)</label><input type="number" id="vsplit" min="0" max="120" step="1" value="0"></div>
+    </div>
+    <label>הנחיית תנועה (אופציונלי, באנגלית עובד הכי טוב)</label>
+    <input type="text" id="vprompt" placeholder="speaks warmly to the camera, slight head movements">
+    <label class="inline"><input type="checkbox" id="sub-on" checked> לצרוב כתוביות</label>
+    <div class="row" id="sub-opts">
+      <div><label>גודל כתוביות</label><select id="sub-size"><option value="s">קטן</option><option value="m" selected>בינוני</option><option value="l">גדול</option></select></div>
+      <div><label class="inline" style="margin-bottom:10px"><input type="checkbox" id="sub-box"> רקע כהה מאחורי הטקסט</label></div>
+    </div>
+    <div class="warn hidden" id="nopub">לא הוגדר PUBLIC_BASE_URL בשרת: התמונה והאודיו יישלחו ל-OpenRouter כ-data URI. אם הפקת הווידאו נכשלת, הגדר את כתובת האפליקציה.</div>
+    <div style="margin-top:14px"><button id="mk-video">הפק סרטון</button></div>
+    <div class="error" id="videoerr"></div>
+    <div id="videos"></div>
+  </section>
+
+  <section id="s-clean" class="hidden">
+    <button class="ghost small" id="del-job">מחק את הקבצים מהשרת</button>
+    <span class="note">מוחק את התמונה, האודיו, הכתוביות והסרטונים שנשמרו בשרת.</span>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmt = t => { t = Math.max(0, t); return `${Math.floor(t/60)}:${(t%60).toFixed(1).padStart(4,"0")}`; };
+const OR = "https://openrouter.ai/api/v1";
+const KEY_NAME = "savta_or_key";
+const JOB_KEY = "savta_talk_job";
+
+let S = { job: null, cfg: null, files: {}, videos: [] };
+
+// ================================================================ key (BYOK, shared with the main page)
+function getKey() { try { return localStorage.getItem(KEY_NAME) || sessionStorage.getItem(KEY_NAME) || ""; } catch (e) { return ""; } }
+function setKey(k, remember) {
+  try { localStorage.removeItem(KEY_NAME); sessionStorage.removeItem(KEY_NAME); (remember ? localStorage : sessionStorage).setItem(KEY_NAME, k); } catch (e) {}
+}
+function clearKey() { try { localStorage.removeItem(KEY_NAME); sessionStorage.removeItem(KEY_NAME); } catch (e) {} }
+function renderKey() {
+  const k = getKey();
+  $("key-form").classList.toggle("hidden", !!k);
+  $("key-ok").classList.toggle("hidden", !k);
+  $("key-ok").innerHTML = k ? `מפתח שמור בדפדפן: <b dir="ltr">${esc(k.slice(0, 9))}…${esc(k.slice(-4))}</b> <button class="ghost small" id="key-del" style="margin-inline-start:10px">מחק מפתח</button>` : "";
+  if (k) $("key-del").onclick = () => { clearKey(); renderKey(); };
+}
+$("key-save").onclick = () => {
+  const k = $("keyin").value.trim();
+  if (!/^sk-or-/.test(k)) { alert("זה לא נראה כמו מפתח OpenRouter (מתחיל ב-sk-or-)"); return; }
+  setKey(k, $("key-remember").checked); $("keyin").value = ""; renderKey();
+};
+
+async function orFetch(path, opts = {}) {
+  const key = getKey();
+  if (!key) throw new Error("לא הוזן מפתח OpenRouter");
+  const headers = { Authorization: `Bearer ${key}`, "X-Title": "Savta Blessing", ...(opts.headers || {}) };
+  let r;
+  try { r = await fetch(path.startsWith("http") ? path : OR + path, { ...opts, headers }); }
+  catch (e) { throw new Error("הבקשה ל-OpenRouter נחסמה או נכשלה ברשת (" + e.message + ")"); }
+  if (!r.ok) {
+    let m = ""; try { const j = await r.json(); m = j.error?.message || JSON.stringify(j).slice(0, 400); } catch (e) { m = r.statusText; }
+    if (r.status === 401) m = "המפתח נדחה (401). בדוק שהוא תקין ופעיל. " + m;
+    if (r.status === 402) m = "אין מספיק קרדיט בחשבון OpenRouter. " + m;
+    throw new Error(`OpenRouter ${r.status}: ${m}`);
+  }
+  return r;
+}
+
+// ================================================================ helpers
+async function api(url, opts) {
+  const r = await fetch(url, opts);
+  if (!r.ok) { let m = r.statusText; try { const j = await r.json(); m = j.detail || m; } catch (e) {} throw new Error(typeof m === "string" ? m : JSON.stringify(m)); }
+  return r.json();
+}
+const post = (url, body) => api(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+const fileUrl = name => `/api/jobs/${S.job.id}/files/${name}`;
+const fetchBlob = async url => { const r = await fetch(url); if (!r.ok) throw new Error("הורדת קובץ מהשרת נכשלה"); return r.blob(); };
+const toDataUri = blob => new Promise((res, rej) => { const f = new FileReader(); f.onload = () => res(f.result); f.onerror = rej; f.readAsDataURL(blob); });
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const vidsKey = () => "savta_talk_vids_" + S.job.id;
+function saveVids() { try { localStorage.setItem(vidsKey(), JSON.stringify(S.videos.filter(v => v.status === "done"))); } catch (e) {} }
+function loadVids() { try { return JSON.parse(localStorage.getItem(vidsKey())) || []; } catch (e) { return []; } }
+
+// ================================================================ picking the three files
+const LABELS = { image: "תמונה", audio: "אודיו", subs: "כתוביות" };
+function setFile(kind, file) {
+  if (!file) return;
+  S.files[kind] = file;
+  const box = $("p-" + kind);
+  box.classList.add("set");
+  const preview = kind === "image" && file.type.startsWith("image/") ? `<img src="${URL.createObjectURL(file)}" alt="">` : "";
+  box.innerHTML = `<b>${LABELS[kind]}</b>${preview}<small>${esc(file.name)}</small><span>לחץ להחלפה</span>`;
+  $("up-btn").disabled = !(S.files.image && S.files.audio && S.files.subs);
+}
+for (const kind of ["image", "audio", "subs"]) {
+  const box = $("p-" + kind), input = $("f-" + kind);
+  box.onclick = () => input.click();
+  box.ondragover = e => { e.preventDefault(); box.classList.add("over"); };
+  box.ondragleave = () => box.classList.remove("over");
+  box.ondrop = e => { e.preventDefault(); box.classList.remove("over"); setFile(kind, e.dataTransfer.files[0]); };
+  input.onchange = e => { setFile(kind, e.target.files[0]); e.target.value = ""; };
+}
+
+$("up-btn").onclick = () => {
+  $("uperr").textContent = ""; $("upbar").classList.remove("hidden"); $("up-btn").disabled = true;
+  const fd = new FormData();
+  fd.append("image", S.files.image); fd.append("audio", S.files.audio); fd.append("subs", S.files.subs);
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", "/api/talk");
+  xhr.upload.onprogress = e => {
+    if (!e.lengthComputable) return;
+    const p = Math.round(e.loaded / e.total * 100);
+    $("upbar").firstElementChild.style.width = p + "%";
+    $("upstatus").textContent = p < 100 ? `מעלה... ${p}%` : "מכין את הקבצים בשרת...";
+  };
+  xhr.onload = () => {
+    let j = {}; try { j = JSON.parse(xhr.responseText); } catch (e) {}
+    $("upbar").classList.add("hidden"); $("up-btn").disabled = false;
+    if (xhr.status !== 200) { $("upstatus").textContent = ""; $("uperr").textContent = j.detail || "ההעלאה נכשלה"; return; }
+    $("upstatus").textContent = "מוכן.";
+    S.job = j; S.videos = [];
+    try { localStorage.setItem(JOB_KEY, j.id); } catch (e) {}
+    render();
+  };
+  xhr.onerror = () => { $("uperr").textContent = "שגיאת רשת בהעלאה"; $("upbar").classList.add("hidden"); $("up-btn").disabled = false; };
+  xhr.send(fd);
+};
+
+// ================================================================ ready state
+function render() {
+  if (!S.job) return;
+  for (const id of ["s-ready", "s-video", "s-clean"]) $(id).classList.remove("hidden");
+  $("r-img").src = fileUrl(S.job.frames[0].name);
+  if ($("r-audio").dataset.job !== S.job.id) { $("r-audio").src = fileUrl(S.job.audio); $("r-audio").dataset.job = S.job.id; }
+  $("r-info").textContent = `אורך האודיו: ${fmt(S.job.duration)} · ${S.job.cues} כתוביות`;
+  renderVideos();
+}
+
+$("subs-btn").onclick = () => $("f-subs2").click();
+$("f-subs2").onchange = async e => {
+  const file = e.target.files[0]; e.target.value = ""; if (!file) return;
+  $("subserr").textContent = ""; $("subs-status").textContent = "מעלה...";
+  const fd = new FormData(); fd.append("subs", file);
+  try { S.job = await api(`/api/jobs/${S.job.id}/subs`, { method: "POST", body: fd }); $("subs-status").textContent = "הוחלף."; render(); }
+  catch (err) { $("subs-status").textContent = ""; $("subserr").textContent = err.message; }
+};
+
+$("sub-on").onchange = () => $("sub-opts").classList.toggle("hidden", !$("sub-on").checked);
+const subOpts = () => ({ subs: $("sub-on").checked, sub_size: $("sub-size").value, sub_box: $("sub-box").checked });
+const subLabel = o => o.subs ? `כתוביות ${{ s: "קטנות", m: "בינוניות", l: "גדולות" }[o.sub_size]}${o.sub_box ? " עם רקע" : ""}` : "בלי כתוביות";
+
+// ================================================================ video (browser -> OpenRouter, joined + subtitled on the server)
+async function mediaUrl(name) {
+  if (S.cfg.public_url_set) {
+    const r = await api(`/api/jobs/${S.job.id}/sign?name=${encodeURIComponent(name)}`);
+    if (r.url) return r.url;
+  }
+  return toDataUri(await fetchBlob(fileUrl(name)));
+}
+
+async function genClip(model, imgUrl, audUrl, prompt, seconds, item) {
+  const payload = { model, input_references: [{ type: "image_url", image_url: { url: imgUrl } }, { type: "audio_url", audio_url: { url: audUrl } }] };
+  if (prompt) payload.prompt = prompt;
+  if (!model.startsWith("heygen/")) {
+    payload.duration = Math.max(1, Math.ceil(seconds || 5));
+    if (!prompt) payload.prompt = "The person in the photo speaks to the camera with natural lip-sync, gentle head movement and natural expressions.";
+  }
+  const submit = p => orFetch("/videos", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(p) }).then(r => r.json());
+  let job;
+  try { job = await submit(payload); }
+  catch (e) {
+    // some providers want the still as an explicit first frame
+    const p2 = { ...payload, frame_images: [{ type: "image_url", image_url: { url: imgUrl }, frame_type: "first_frame" }], input_references: payload.input_references.slice(1) };
+    try { job = await submit(p2); } catch (e2) { throw e; }
+  }
+  const poll = job.polling_url ? (job.polling_url.startsWith("http") ? job.polling_url : "https://openrouter.ai" + job.polling_url) : `${OR}/videos/${job.id}`;
+  const deadline = Date.now() + 20 * 60 * 1000;
+  let cur = job, status = job.status || "pending";
+  while (!["completed", "failed", "cancelled", "expired"].includes(status)) {
+    if (Date.now() > deadline) throw new Error("הפקת הווידאו לקחה יותר מ-20 דקות ונעצרה");
+    await sleep(5000);
+    try { cur = await (await orFetch(poll)).json(); status = cur.status || status; item.provider_status = status; renderVideos(); } catch (e) { if (/401|402/.test(e.message)) throw e; }
+  }
+  if (status !== "completed") throw new Error(`הפקת הווידאו נכשלה (${status}): ${cur.error || ""}`);
+  if (cur.usage?.cost != null) item.cost = (item.cost || 0) + cur.usage.cost;
+  if (cur.urls?.length) return { url: cur.urls[0] };
+  if (cur.unsigned_urls?.length) return { blob: await (await orFetch(cur.unsigned_urls[0])).blob() };
+  throw new Error("הווידאו הושלם אבל לא התקבל קישור להורדה");
+}
+
+async function makeVideo(model, prompt, opts, item) {
+  const maxLen = +$("vsplit").value || 0;
+  // one clip, or (for models with a length limit) chunks cut at pauses, each starting from the previous clip's last frame
+  const chunks = maxLen >= 4 && S.job.duration > maxLen + 0.5
+    ? (await post(`/api/jobs/${S.job.id}/split`, { name: S.job.audio, max_len: maxLen })).chunks
+    : [{ name: S.job.audio, seconds: S.job.duration }];
+  const parts = []; let frame = S.job.frames[0].name;
+  for (let i = 0; i < chunks.length; i++) {
+    item.progress = chunks.length > 1 ? `קטע ${i + 1} מתוך ${chunks.length}` : ""; item.provider_status = ""; renderVideos();
+    let part, lastErr;
+    for (let attempt = 0; attempt < 2 && !part; attempt++) {
+      try {
+        const [imgUrl, audUrl] = await Promise.all([mediaUrl(frame), mediaUrl(chunks[i].name)]);
+        const r = await genClip(model, imgUrl, audUrl, prompt, chunks[i].seconds, item);
+        const pf = new FormData(); pf.append("seconds", chunks[i].seconds);
+        if (r.url) pf.append("url", r.url); else pf.append("file", r.blob, "part.mp4");
+        part = await api(`/api/jobs/${S.job.id}/part`, { method: "POST", body: pf });
+      } catch (e) { lastErr = e; if (/401|402/.test(e.message)) break; }
+    }
+    if (!part) throw new Error(chunks.length > 1 ? `קטע ${i + 1} מתוך ${chunks.length} נכשל: ${lastErr.message}` : lastErr.message);
+    parts.push({ name: part.name, seconds: chunks[i].seconds }); frame = part.frame;
+  }
+  item.parts = parts;
+  item.progress = opts.subs ? "מחבר וצורב כתוביות" : "מחבר את הסרטון"; item.provider_status = ""; renderVideos();
+  const fin = await post(`/api/jobs/${S.job.id}/stitch`, { parts, audio: S.job.audio, ...opts });
+  item.progress = "";
+  return { href: fileUrl(fin.name) };
+}
+
+$("vidmodel").onchange = () => { $("vsplit").value = $("vidmodel").value.includes("seedance") ? 14 : 0; };
+$("mk-video").onclick = async () => {
+  $("videoerr").textContent = "";
+  if (!getKey()) { $("videoerr").textContent = "הזן מפתח OpenRouter בראש הדף"; return; }
+  const opts = subOpts();
+  const item = { id: Math.random().toString(36).slice(2, 8), status: "working", model: $("vidmodel").value, label: subLabel(opts) };
+  S.videos.push(item); renderVideos(); $("mk-video").disabled = true;
+  try { Object.assign(item, await makeVideo(item.model, $("vprompt").value.trim(), opts, item), { status: "done" }); saveVids(); }
+  catch (e) { item.status = "error"; item.error = e.message; }
+  $("mk-video").disabled = false; renderVideos();
+};
+
+// re-run only the cheap server step (join + subtitles) on clips that were already generated
+async function reburn(id) {
+  const src = S.videos.find(v => v.id === id); if (!src?.parts) return;
+  const opts = subOpts();
+  const item = { id: Math.random().toString(36).slice(2, 8), status: "working", model: src.model, parts: src.parts,
+                 label: subLabel(opts) + " (צריבה מחדש)", progress: "צורב מחדש" };
+  S.videos.push(item); renderVideos();
+  try { const fin = await post(`/api/jobs/${S.job.id}/stitch`, { parts: src.parts, audio: S.job.audio, ...opts }); Object.assign(item, { href: fileUrl(fin.name), status: "done", progress: "" }); saveVids(); }
+  catch (e) { item.status = "error"; item.error = e.message; }
+  renderVideos();
+}
+
+function renderVideos() {
+  $("videos").innerHTML = S.videos.slice().reverse().map(v => `<div class="item">
+    <span class="tag">${esc(v.model)}</span> <span class="tag">${esc(v.label || "")}</span>
+    ${v.status === "working" ? `<div class="status">${v.parts ? "" : "מפיק סרטון (1-5 דקות" + (/קטע/.test(v.progress || "") ? " לכל קטע" : "") + ")... "}${esc(v.progress || "")} ${esc(v.provider_status || "")}</div>`
+      : v.status === "error" ? `<div class="error">${esc(v.error)}</div>`
+      : `<video controls src="${esc(v.href)}"></video><div class="status"><a href="${esc(v.href)}" download="talking.mp4">הורד MP4</a>${v.cost != null ? ` · עלות $${(+v.cost).toFixed(2)}` : ""}
+         ${v.parts ? ` · <button class="ghost small" data-reburn="${esc(v.id)}">צרוב מחדש עם הגדרות הכתוביות הנוכחיות</button>` : ""}</div>`}
+  </div>`).join("");
+}
+$("videos").onclick = e => { const b = e.target.closest("[data-reburn]"); if (b) reburn(b.dataset.reburn); };
+
+$("del-job").onclick = async () => {
+  if (!confirm("למחוק את התמונה, האודיו, הכתוביות והסרטונים מהשרת?")) return;
+  try { await api(`/api/jobs/${S.job.id}`, { method: "DELETE" }); } catch (e) {}
+  try { localStorage.removeItem(JOB_KEY); localStorage.removeItem(vidsKey()); } catch (e) {}
+  location.reload();
+};
+
+// ================================================================ init
+(async function init() {
+  renderKey();
+  S.cfg = await api("/api/config");
+  $("vidmodel").innerHTML = S.cfg.video_models.map(m => `<option value="${esc(m.id)}">${esc(m.label)}</option>`).join("");
+  $("nopub").classList.toggle("hidden", S.cfg.public_url_set);
+  let saved = null; try { saved = localStorage.getItem(JOB_KEY); } catch (e) {}
+  if (!saved) return;
+  try {
+    const j = await api(`/api/jobs/${saved}`);
+    if (j.kind !== "talk") throw new Error("not a talk job");
+    S.job = j; S.videos = loadVids(); render();
+  } catch (e) { try { localStorage.removeItem(JOB_KEY); } catch (x) {} }
+})();
+</script>
+</body>
+</html>

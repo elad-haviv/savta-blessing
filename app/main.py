@@ -34,6 +34,7 @@ SIGN_KEY = (os.environ.get("MEDIA_SIGN_KEY") or APP_PASSWORD or secrets.token_he
 ALLOWED_EXT = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".3gp", ".mpg", ".mpeg", ".wmv", ".flv"}
 AUDIO_EXT = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".opus", ".flac", ".wma", ".amr"}
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".heic", ".heif"}
+SUB_EXT = {".srt", ".vtt", ".ass", ".ssa"}
 VOICE_MODELS = [
     {"id": "fish-audio/s2.1-pro", "label": "Fish Audio S2.1 Pro (ברירת מחדל)"},
     {"id": "fish-audio/drama-3", "label": "Fish Audio Drama 3"},
@@ -72,7 +73,7 @@ LOGIN_HTML = """<!doctype html><html lang="he" dir="rtl"><head><meta charset="ut
 <style>body{font-family:system-ui,sans-serif;background:#16181d;color:#eee;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}
 form{display:flex;flex-direction:column;gap:12px;width:min(320px,90vw)}input,button{font-size:18px;padding:12px;border-radius:8px;border:1px solid #444;background:#23262d;color:#eee}
 button{background:#3b82f6;border:0;font-weight:600}.e{color:#f87171;min-height:1.2em}</style></head><body>
-<form method="post" action="/login"><h2>ברכת סבתא</h2><input type="password" name="password" placeholder="סיסמה" autofocus required>
+<form method="post" action="/login"><h2>ברכת סבתא</h2><input type="hidden" name="next" value="__NEXT__"><input type="password" name="password" placeholder="סיסמה" autofocus required>
 <button type="submit">כניסה</button><div class="e">__ERR__</div></form></body></html>"""
 LOGIN_CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
 
@@ -90,8 +91,12 @@ def _cookie_ok(v: str | None) -> bool:
         return False
 
 
-def _login_page(err: str = "", status: int = 401) -> HTMLResponse:
-    return HTMLResponse(LOGIN_HTML.replace("__ERR__", err), status_code=status,
+PAGES = ("/", "/talk")
+
+
+def _login_page(err: str = "", status: int = 401, next_path: str = "/") -> HTMLResponse:
+    nxt = next_path if next_path in PAGES else "/"
+    return HTMLResponse(LOGIN_HTML.replace("__ERR__", err).replace("__NEXT__", nxt), status_code=status,
                         headers={"Content-Security-Policy": LOGIN_CSP, "Cache-Control": "no-store"})
 
 
@@ -110,15 +115,16 @@ def require_auth(request: Request, creds: HTTPBasicCredentials = Depends(securit
 @app.exception_handler(HTTPException)
 async def _http_exc(request: Request, exc: HTTPException):
     if exc.status_code == 401 and exc.headers and exc.headers.get("X-Login"):
-        return _login_page()
+        return _login_page(next_path=request.url.path)
     return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
 
 
 @app.post("/login")
-def login(password: str = Form("")):
+def login(password: str = Form(""), next: str = Form("/")):  # noqa: A002 - form field name
+    nxt = next if next in PAGES else "/"
     if not APP_PASSWORD or not hmac.compare_digest(password.encode(), APP_PASSWORD.encode()):
-        return _login_page("סיסמה שגויה", 401)
-    r = RedirectResponse("/", status_code=303)
+        return _login_page("סיסמה שגויה", 401, nxt)
+    r = RedirectResponse(nxt, status_code=303)
     r.set_cookie(COOKIE, _cookie_value(int(time.time()) + COOKIE_TTL), max_age=COOKIE_TTL,
                  httponly=True, secure=True, samesite="strict", path="/")
     return r
@@ -412,6 +418,9 @@ class StitchPart(BaseModel):
 class StitchReq(BaseModel):
     parts: list[StitchPart] = Field(min_length=1, max_length=60)
     audio: str
+    subs: bool = False
+    sub_size: str = Field("m", pattern="^[sml]$")
+    sub_box: bool = False
 
 
 @app.post("/api/jobs/{job_id}/stitch", dependencies=[Depends(require_auth)])
@@ -421,12 +430,99 @@ def stitch(job_id: str, req: StitchReq):
     if any(not SAFE_NAME.match(n) or not (d / n).is_file() for n in names) \
             or any(not p.name.startswith("part_") for p in req.parts) or not req.audio.startswith("stage_"):
         raise HTTPException(404)
+    subs = None
+    if req.subs:
+        name = load(job_id).get("subs")
+        if not name or not (d / name).is_file():
+            raise HTTPException(400, "אין קובץ כתוביות בג'וב הזה")
+        subs = d / name
     out = f"final_{uuid.uuid4().hex[:8]}.mp4"
     try:
-        pl.stitch([(d / p.name, p.seconds) for p in req.parts], d / req.audio, d / out)
+        pl.stitch([(d / p.name, p.seconds) for p in req.parts], d / req.audio, d / out,
+                  subs=subs, sub_style=pl.subtitle_style(req.sub_size, req.sub_box))
     except pl.PipelineError as e:
         raise HTTPException(400, str(e))
     return {"name": out}
+
+
+# ------------------------------------------------------------------ talking picture: image + audio + subtitles
+
+def _ext(f: UploadFile, allowed: set[str], what: str) -> str:
+    ext = Path(f.filename or "").suffix.lower()
+    if ext not in allowed:
+        raise HTTPException(400, f"{what}: סוג קובץ לא נתמך ({ext or 'ללא סיומת'}). נתמכים: {', '.join(sorted(allowed))}")
+    return ext
+
+
+def _save(f: UploadFile, dest: Path, limit_mb: int, what: str) -> Path:
+    size, limit = 0, limit_mb * 1024 * 1024
+    with dest.open("wb") as fh:
+        while chunk := f.file.read(1024 * 1024):
+            size += len(chunk)
+            if size > limit:
+                raise HTTPException(413, f"{what} גדול מ-{limit_mb}MB")
+            fh.write(chunk)
+    return dest
+
+
+def _set_subs(d: Path, f: UploadFile) -> tuple[str, int]:
+    ext = _ext(f, SUB_EXT, "כתוביות")
+    raw = f.file.read(2 * 1024 * 1024 + 1)
+    if len(raw) > 2 * 1024 * 1024:
+        raise HTTPException(413, "קובץ הכתוביות גדול מ-2MB")
+    try:
+        return pl.prepare_subtitles(raw, ext, d)
+    except pl.PipelineError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/talk", dependencies=[Depends(require_auth)])
+def create_talk(image: UploadFile = File(...), audio: UploadFile = File(...), subs: UploadFile = File(...)):
+    """One picture, one finished audio track and a subtitle file: everything the talk page needs, ready at once."""
+    img_ext = _ext(image, IMAGE_EXT, "תמונה")
+    aud_ext = _ext(audio, AUDIO_EXT | ALLOWED_EXT, "אודיו")
+    _ext(subs, SUB_EXT, "כתוביות")
+    job_id = uuid.uuid4().hex
+    d = DATA_DIR / "jobs" / job_id
+    d.mkdir(parents=True)
+    try:
+        uid = uuid.uuid4().hex[:6]
+        raw_img = _save(image, d / f"upload_{uid}{img_ext}", 25, "התמונה")
+        frame = f"frame_u{uid}.jpg"
+        try:
+            pl.normalize_image(raw_img, d / frame)
+        except pl.PipelineError:
+            raise HTTPException(400, "לא הצלחתי לקרוא את התמונה")
+        finally:
+            raw_img.unlink(missing_ok=True)
+
+        src = _save(audio, d / f"source{aud_ext}", MAX_UPLOAD_MB, "האודיו")
+        try:
+            if not pl.has_audio(src):
+                raise HTTPException(400, "בקובץ האודיו אין רצועת קול")
+            staged = f"stage_{uuid.uuid4().hex[:8]}.mp3"
+            pl.to_speech_mp3(src, d / staged)
+            duration = pl.probe_duration(d / staged)
+        except pl.PipelineError as e:
+            raise HTTPException(400, f"לא הצלחתי לקרוא את האודיו: {e}")
+
+        sub_name, cues = _set_subs(d, subs)
+    except BaseException:
+        shutil.rmtree(d, ignore_errors=True)
+        raise
+    state = {"id": job_id, "created": int(time.time()), "kind": "talk", "status": "ready",
+             "filename": audio.filename, "duration": round(duration, 3),
+             "frames": [{"name": frame, "t": None, "score": 0, "uploaded": True}],
+             "audio": staged, "subs": sub_name, "cues": cues}
+    (d / "state.json").write_text(json.dumps(state, ensure_ascii=False), "utf-8")
+    return state
+
+
+@app.post("/api/jobs/{job_id}/subs", dependencies=[Depends(require_auth)])
+def replace_subs(job_id: str, subs: UploadFile = File(...)):
+    """Swap in a corrected subtitle file; finished videos can then be re-burned without generating again."""
+    name, cues = _set_subs(jobdir(job_id), subs)
+    return mutate(job_id, subs=name, cues=cues)
 
 
 @app.get("/api/jobs/{job_id}/sign", dependencies=[Depends(require_auth)])
@@ -497,11 +593,20 @@ def startup():
 static_dir = Path(__file__).parent / "static"
 
 
-@app.get("/", dependencies=[Depends(require_auth)])
-def index():
-    html = (static_dir / "index.html").read_text("utf-8")
+def _page(name: str) -> HTMLResponse:
+    html = (static_dir / name).read_text("utf-8")
     return HTMLResponse(html, headers={"Content-Security-Policy": CSP, "Referrer-Policy": "no-referrer",
                                        "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+
+
+@app.get("/", dependencies=[Depends(require_auth)])
+def index():
+    return _page("index.html")
+
+
+@app.get("/talk", dependencies=[Depends(require_auth)])
+def talk_page():
+    return _page("talk.html")
 
 
 app.mount("/static", StaticFiles(directory=static_dir), name="static")

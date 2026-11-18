@@ -21,8 +21,8 @@ class PipelineError(Exception):
 
 # ---------------------------------------------------------------- ffmpeg
 
-def run(cmd: list[str], timeout: int = 600) -> str:
-    p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+def run(cmd: list[str], timeout: int = 600, cwd: Path | None = None) -> str:
+    p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd)
     if p.returncode != 0:
         raise PipelineError(f"{cmd[0]} נכשל: {p.stderr[-400:]}")
     return p.stdout
@@ -49,6 +49,12 @@ def extract_audio(src: Path, jobdir: Path) -> tuple[Path, Path]:
     run(["ffmpeg", "-y", "-i", str(src), "-vn", "-ac", "1", "-ar", "24000", str(wav)])
     run(["ffmpeg", "-y", "-i", str(wav), "-b:a", "64k", str(mp3)])
     return wav, mp3
+
+
+def to_speech_mp3(src: Path, out: Path) -> Path:
+    """Any audio (or the audio track of a video) as a clean mp3 a video provider will accept."""
+    run(["ffmpeg", "-y", "-i", str(src), "-vn", "-ac", "1", "-ar", "44100", "-b:a", "128k", str(out)])
+    return out
 
 
 def cut_audio(wav: Path, start: float, end: float, out: Path) -> Path:
@@ -166,8 +172,59 @@ def chain_frame(part: Path, seconds: float, out: Path) -> Path:
     return extract_frame_at(part, max(0.0, min(seconds, dur) - 0.07), out)
 
 
-def stitch(parts: list[tuple[Path, float]], audio: Path, out: Path) -> Path:
-    """Join clips, each fitted to exactly its audio chunk's length, and lay the original audio on top."""
+SUB_FONT = os.environ.get("SUB_FONT", "Noto Sans Hebrew")
+SUB_SIZES = {"s": 14, "m": 18, "l": 24}  # libass units, relative to a 288-line frame
+
+
+def subtitle_style(size: str = "m", box: bool = False) -> str:
+    """force_style for the subtitles filter. Encoding=-1 lets libass detect right-to-left lines,
+    otherwise Hebrew punctuation lands on the wrong side."""
+    s = [f"FontName={SUB_FONT}", f"FontSize={SUB_SIZES.get(size, 18)}", "Bold=1", "MarginV=18", "Encoding=-1",
+         "PrimaryColour=&H00FFFFFF"]
+    if box:
+        s += ["BorderStyle=3", "Outline=6", "Shadow=0", "OutlineColour=&H80000000", "BackColour=&H80000000"]
+    else:
+        s += ["BorderStyle=1", "Outline=1.6", "Shadow=0.8", "OutlineColour=&H00000000", "BackColour=&H80000000"]
+    return ",".join(s)
+
+
+def prepare_subtitles(raw: bytes, ext: str, outdir: Path) -> tuple[str, int]:
+    """Store an uploaded subtitle file as UTF-8 (Hebrew files are often windows-1255), SRT/VTT as subs.srt,
+    ASS/SSA as subs.ass. Returns the stored name and the number of cues."""
+    for enc in ("utf-8-sig", "cp1255"):
+        try:
+            text = raw.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    else:
+        raise PipelineError("לא הצלחתי לקרוא את קובץ הכתוביות (קידוד לא מוכר)")
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    for old in outdir.glob("subs.*"):
+        old.unlink()
+    if ext in (".ass", ".ssa"):
+        out = outdir / "subs.ass"
+        out.write_text(text, "utf-8")
+        cues = sum(1 for line in text.split("\n") if line.startswith("Dialogue:"))
+    else:
+        tmp = outdir / f"subs_in{ext}"
+        tmp.write_text(text, "utf-8")
+        out = outdir / "subs.srt"
+        try:
+            run(["ffmpeg", "-y", "-i", tmp.name, out.name], cwd=outdir)
+        finally:
+            tmp.unlink(missing_ok=True)
+        cues = out.read_text("utf-8").count("-->")
+    if cues == 0:
+        out.unlink(missing_ok=True)
+        raise PipelineError("לא נמצאו כתוביות בקובץ. צריך SRT, VTT או ASS עם זמנים")
+    return out.name, cues
+
+
+def stitch(parts: list[tuple[Path, float]], audio: Path, out: Path,
+           subs: Path | None = None, sub_style: str = "") -> Path:
+    """Join clips, each fitted to exactly its audio chunk's length, and lay the original audio on top.
+    With subs, burn the subtitles into the picture in the same pass."""
     w, h, _ = video_info(parts[0][0])
     w, h = w - w % 2, h - h % 2
     cmd, fc = ["ffmpeg", "-y"], ""
@@ -175,11 +232,18 @@ def stitch(parts: list[tuple[Path, float]], audio: Path, out: Path) -> Path:
         cmd += ["-i", str(p)]
         fc += (f"[{i}:v]fps=30,scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,"
                f"setsar=1,tpad=stop_mode=clone:stop_duration=30,trim=0:{sec:.3f},setpts=PTS-STARTPTS[v{i}];")
-    fc += "".join(f"[v{i}]" for i in range(len(parts))) + f"concat=n={len(parts)}:v=1:a=0[v]"
+    fc += "".join(f"[v{i}]" for i in range(len(parts))) + f"concat=n={len(parts)}:v=1:a=0"
+    if subs is not None:
+        # run in the job folder so the filter gets a bare file name (no path escaping inside the filtergraph)
+        enc = "" if subs.suffix == ".ass" else ":charenc=UTF-8"
+        style = sub_style if subs.suffix != ".ass" else "Encoding=-1"
+        fc += f"[vc];[vc]subtitles=filename={subs.name}{enc}:force_style='{style}'[v]"
+    else:
+        fc += "[v]"
     cmd += ["-i", str(audio), "-filter_complex", fc, "-map", "[v]", "-map", f"{len(parts)}:a",
             "-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", str(out)]
-    run(cmd, timeout=1800)
+    run(cmd, timeout=1800, cwd=subs.parent if subs is not None else None)
     return out
 
 
