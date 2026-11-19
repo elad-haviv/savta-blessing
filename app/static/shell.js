@@ -4,8 +4,9 @@
     { href: "/", label: "ברכת סבתא", sub: "סרטון ישן ← קול משוכפל ← ברכה" },
     { href: "/talk", label: "תמונה מדברת", sub: "תמונה + אודיו + כתוביות" },
     { href: "/frames", label: "סרטון מתמונות", sub: "תמונת התחלה וסיום + תיאור" },
+    { href: "/reference", label: "סרטון מרפרנסים", sub: "תמונות רפרנס + תיאור" },
   ];
-  const KIND = { blessing: "ברכה", talk: "תמונה מדברת", frames: "מתמונות" };
+  const KIND = { blessing: "ברכה", talk: "תמונה מדברת", frames: "מתמונות", refs: "מרפרנסים" };
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const url = (job, name) => `/api/jobs/${job}/files/${encodeURIComponent(name)}`;
   const when = t => new Date(t * 1000).toLocaleString("he-IL", { dateStyle: "short", timeStyle: "short" });
@@ -155,7 +156,7 @@
   }
   const getKey = () => { try { return localStorage.getItem("savta_or_key") || sessionStorage.getItem("savta_or_key") || ""; } catch (e) { return ""; } };
   const sleep = ms => new Promise(r => setTimeout(r, ms));
-  const label = { blessing: "ברכה", talk: "תמונה מדברת", frames: "סרטון מתמונות" };
+  const label = { blessing: "ברכה", talk: "תמונה מדברת", frames: "סרטון מתמונות", refs: "סרטון מרפרנסים" };
 
   async function collect(g, onStatus) {
     const key = getKey(), id = g.gen_id.slice(-8), what = `${label[g.page]} (${when(g.created)})`;

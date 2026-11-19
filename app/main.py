@@ -91,7 +91,7 @@ def _cookie_ok(v: str | None) -> bool:
         return False
 
 
-PAGES = ("/", "/talk", "/frames")
+PAGES = ("/", "/talk", "/frames", "/reference")
 
 
 def _login_page(err: str = "", status: int = 401, next_path: str = "/") -> HTMLResponse:
@@ -547,6 +547,39 @@ def create_frames(start: UploadFile = File(...), end: UploadFile | None = File(N
     return state
 
 
+MAX_REFS = 9
+
+
+@app.post("/api/refs", dependencies=[Depends(require_auth)])
+def create_refs(images: list[UploadFile] = File(...)):
+    """Reference images (characters, places, style) for reference-to-video generation."""
+    if not 1 <= len(images) <= MAX_REFS:
+        raise HTTPException(400, f"צריך בין 1 ל-{MAX_REFS} תמונות רפרנס")
+    exts = [_ext(f, IMAGE_EXT, "תמונת רפרנס") for f in images]
+    job_id = uuid.uuid4().hex
+    d = DATA_DIR / "jobs" / job_id
+    d.mkdir(parents=True)
+    frames = []
+    try:
+        for i, (f, ext) in enumerate(zip(images, exts), 1):
+            uid = uuid.uuid4().hex[:6]
+            raw = _save(f, d / f"upload_{uid}{ext}", 25, f"תמונה {i}")
+            name = f"frame_u{uid}.jpg"
+            try:
+                pl.normalize_image(raw, d / name)
+            except pl.PipelineError:
+                raise HTTPException(400, f"לא הצלחתי לקרוא את תמונה {i} ({f.filename})")
+            finally:
+                raw.unlink(missing_ok=True)
+            frames.append({"name": name, "role": "ref", "t": None, "score": 0, "uploaded": True})
+    except BaseException:
+        shutil.rmtree(d, ignore_errors=True)
+        raise
+    state = {"id": job_id, "created": int(time.time()), "kind": "refs", "status": "ready", "frames": frames}
+    (d / "state.json").write_text(json.dumps(state, ensure_ascii=False), "utf-8")
+    return state
+
+
 @app.post("/api/jobs/{job_id}/subs", dependencies=[Depends(require_auth)])
 def replace_subs(job_id: str, subs: UploadFile = File(...)):
     """Swap in a corrected subtitle file; finished videos can then be re-burned without generating again."""
@@ -558,13 +591,13 @@ def replace_subs(job_id: str, subs: UploadFile = File(...)):
 
 class RecordReq(BaseModel):
     name: str
-    kind: str = Field(pattern="^(blessing|talk|frames)$")
+    kind: str = Field(pattern="^(blessing|talk|frames|refs)$")
     title: str = Field("", max_length=300)
     model: str = Field("", max_length=120)
     label: str = Field("", max_length=200)
     prompt: str = Field("", max_length=3000)
     cost: float | None = None
-    inputs: list[str] = Field(default_factory=list, max_length=10)
+    inputs: list[str] = Field(default_factory=list, max_length=12)
 
 
 @app.post("/api/jobs/{job_id}/record", dependencies=[Depends(require_auth)])
@@ -588,7 +621,7 @@ def record_output(job_id: str, req: RecordReq):
     return {**entry, "job": job_id}
 
 
-KIND_OF_JOB = {"talk": "talk", "frames": "frames"}  # anything else came from the main page
+KIND_OF_JOB = {"talk": "talk", "frames": "frames", "refs": "refs"}  # anything else came from the main page
 
 
 def _untracked(d: Path, st: dict) -> list[dict]:
@@ -597,7 +630,7 @@ def _untracked(d: Path, st: dict) -> list[dict]:
     known = {o["name"] for o in st.get("outputs", [])} | {g.get("part") for g in st.get("gens", {}).values()}
     kind = KIND_OF_JOB.get(st.get("kind"), "blessing")
     orphan = False
-    if kind == "frames":
+    if kind in ("frames", "refs"):  # one clip per generation: the part is the finished video
         vids = sorted(d.glob("part_*.mp4"))
     else:
         vids = sorted(d.glob("final_*.mp4"))
@@ -633,7 +666,7 @@ def _jobs():
 class GenReq(BaseModel):
     gen_id: str = Field(min_length=1, max_length=200)
     polling_url: str = Field("", max_length=500)
-    page: str = Field(pattern="^(blessing|talk|frames)$")
+    page: str = Field(pattern="^(blessing|talk|frames|refs)$")
     model: str = Field("", max_length=120)
     label: str = Field("", max_length=200)
     prompt: str = Field("", max_length=3000)
@@ -643,7 +676,7 @@ class GenReq(BaseModel):
     chunks: int = Field(1, ge=1, le=100)
     audio: str = Field("", max_length=100)
     stitch: dict = Field(default_factory=dict)
-    inputs: list[str] = Field(default_factory=list, max_length=10)
+    inputs: list[str] = Field(default_factory=list, max_length=12)
 
 
 @app.post("/api/jobs/{job_id}/gens", dependencies=[Depends(require_auth)])
@@ -815,6 +848,11 @@ def talk_page():
 @app.get("/frames", dependencies=[Depends(require_auth)])
 def frames_page():
     return _page("frames.html")
+
+
+@app.get("/reference", dependencies=[Depends(require_auth)])
+def reference_page():
+    return _page("reference.html")
 
 
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
