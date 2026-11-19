@@ -177,7 +177,9 @@ def _file(job_id: str, name: str) -> FileResponse:
     p = jobdir(job_id) / name
     if not p.is_file():
         raise HTTPException(404)
-    return FileResponse(p)
+    # "private": the browser may keep it, a CDN (Cloudflare) must not. A shared cache would hand these files
+    # to anyone with the link, and would also swallow the byte-range requests iPhone Safari needs to play video.
+    return FileResponse(p, headers={"Cache-Control": "private, max-age=3600"})
 
 
 @app.get("/m/{job_id}/{name}")
@@ -879,6 +881,15 @@ def _page(name: str) -> HTMLResponse:
     html = html.replace('src="/static/shell.js"', f'src="/static/shell.js?v={ver}"')
     return HTMLResponse(html, headers={"Content-Security-Policy": CSP, "Referrer-Policy": "no-referrer",
                                        "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+
+
+@app.middleware("http")
+async def no_shared_cache(request: Request, call_next):
+    """Nothing behind the login may be stored by a CDN; everything else keeps its own headers."""
+    resp = await call_next(request)
+    if request.url.path.startswith(("/api/", "/m/")) and "cache-control" not in resp.headers:
+        resp.headers["Cache-Control"] = "private, no-store"
+    return resp
 
 
 @app.get("/", dependencies=[Depends(require_auth)])
