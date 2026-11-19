@@ -94,6 +94,8 @@
       <div><label>רזולוציה</label><select id="resolution"></select></div>
       <div id="aspect-wrap"><label>יחס תמונה</label><select id="aspect"></select></div>
     </div>
+    <label>אורך סופי מדויק בשניות (לא חובה, למשל 1.5). הסרטון נוצר באורך שנבחר למעלה ונחתך מההתחלה לאורך הזה</label>
+    <input type="number" id="cut" min="0.2" step="0.1" inputmode="decimal" placeholder="ריק = בלי חיתוך" style="max-width:220px">
     <label class="inline hidden" id="audio-wrap"><input type="checkbox" id="audio"> ליצור גם סאונד (אם המודל תומך, לפעמים במחיר גבוה יותר)</label>
     <div class="prompt-sm" id="price"></div>
     <div class="note">מודלים שמסומנים "רפרנס" מצהירים שהם עובדים עם תמונות רפרנס. השאר מקבלים תמונות, אבל ייתכן שישתמשו רק בראשונה או יתייחסו אליה כפריים פתיחה. מספר התמונות שכל מודל מקבל משתנה: אם יש שגיאה, נסה פחות תמונות.</div>
@@ -214,10 +216,11 @@ document.addEventListener("paste", e => {  // Ctrl/Cmd+V on desktop
 
 // ================================================================ models (live list from OpenRouter, so new ones show up by themselves)
 const curModel = () => S.models.find(m => m.id === $("model").value);
+const durRange = m => { const d = (m.supported_durations || []).filter(x => x > 0); return d.length ? `  · ${Math.min(...d)}–${Math.max(...d)} שנ׳` : ""; };
 
 function renderModels() {
   if (!S.models.length) return;
-  const prev = $("model").value, opt = m => `<option value="${esc(m.id)}">${esc(m.name || m.id)}</option>`;
+  const prev = $("model").value, opt = m => `<option value="${esc(m.id)}">${esc(m.name || m.id)}${durRange(m)}</option>`;
   const ref = S.models.filter(m => m.isRef), rest = S.models.filter(m => !m.isRef);
   $("model").innerHTML = (ref.length ? `<optgroup label="רפרנס (מומלץ)">${ref.map(opt).join("")}</optgroup>` : "")
     + (rest.length ? `<optgroup label="מקבלים תמונות (ייתכן שרק כפריים פתיחה)">${rest.map(opt).join("")}</optgroup>` : "");
@@ -257,6 +260,10 @@ function renderPrice() {
   $("price").textContent = shown.length ? "מחירון OpenRouter: " + shown.join(" · ") : "";
 }
 $("model").onchange = renderParams;
+$("cut").oninput = () => {  // asking for a short cut: pick the model's shortest duration that still covers it
+  const cut = +$("cut").value || 0, opts = [...$("duration").options].map(o => +o.value).filter(v => v > 0).sort((a, b) => a - b);
+  if (cut > 0 && opts.length) $("duration").value = String(opts.find(v => v >= cut) ?? opts[opts.length - 1]);
+};
 $("resolution").onchange = renderPrice;
 
 // ================================================================ generate
@@ -328,11 +335,22 @@ $("go").onclick = async () => {
     if (!$("aspect-wrap").classList.contains("hidden") && $("aspect").value !== "auto") { body.aspect_ratio = $("aspect").value; settings.push(body.aspect_ratio); }
     if (m.generate_audio === true) { body.generate_audio = $("audio").checked; settings.push($("audio").checked ? "עם סאונד" : "בלי סאונד"); }
     item.settings = settings.join(" · "); item.provider_status = "נשלח";
-    const name = await generate(item, body, job);
+    let name = await generate(item, body, job);
+    const cut = +$("cut").value || 0;
     item.href = fileUrl(job.id, name); item.status = "done"; saveVids();
     await window.Shell?.record(job.id, { name, kind: "refs", title: prompt.slice(0, 80), model: m.id,
       label: item.settings, prompt, cost: item.cost ?? null, inputs: job.frames.map(f => f.name) });
     window.Shell?.genDone(job.id, item.genId, name);
+    if (cut >= 0.2) {  // the model's shortest clip is often 3-5 s: cut it to the exact length asked for
+      item.status = "working"; item.provider_status = `חותך ל-${cut} שנ׳`; renderVideos();
+      try {
+        const t = await api(`/api/jobs/${job.id}/trim`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, start: 0, end: cut }) });
+        item.settings += ` · נחתך ל-${t.end} שנ׳`; item.href = fileUrl(job.id, t.name);
+        await window.Shell?.record(job.id, { name: t.name, kind: "refs", title: (prompt || "").slice(0, 80) || "סרטון", model: m.id,
+          label: item.settings, prompt, cost: 0, inputs: job.frames.map(f => f.name) });
+      } catch (e) { item.settings += " · החיתוך נכשל, זה הסרטון המלא"; }
+      item.status = "done"; saveVids();
+    }
   } catch (e) { item.status = "error"; item.error = e.message; }
   $("go").disabled = false; renderVideos();
 };

@@ -166,6 +166,15 @@ def video_info(path: Path) -> tuple[int, int, float]:
         raise PipelineError("הקליפ שהתקבל אינו קובץ וידאו תקין")
 
 
+def trim(src: Path, out: Path, start: float, end: float) -> Path:
+    """Frame-accurate cut (re-encoded, so it can start anywhere, not just on a keyframe)."""
+    run(["ffmpeg", "-y", "-ss", f"{start:.3f}", "-i", str(src), "-t", f"{end - start:.3f}",
+         "-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p",
+         "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(out)])
+    video_info(out)
+    return out
+
+
 def make_thumb(video: Path, out: Path) -> Path:
     """Small poster image for the history list."""
     _, _, dur = video_info(video)

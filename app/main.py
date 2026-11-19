@@ -666,6 +666,31 @@ def _jobs():
             continue
 
 
+class TrimReq(BaseModel):
+    name: str
+    start: float = Field(0, ge=0, le=3600)
+    end: float = Field(gt=0, le=3600)
+
+
+@app.post("/api/jobs/{job_id}/trim", dependencies=[Depends(require_auth)])
+def trim_video(job_id: str, req: TrimReq):
+    """Cut a saved video to [start, end] seconds as a new file; the original stays."""
+    d = jobdir(job_id)
+    if not SAFE_NAME.match(req.name) or not req.name.startswith(("final_", "part_")) or not (d / req.name).is_file():
+        raise HTTPException(404, "הסרטון לא נמצא בשרת")
+    _, _, dur = pl.video_info(d / req.name)
+    end = min(req.end, dur)
+    if end - req.start < 0.2:
+        raise HTTPException(400, f"הקטע קצר מדי. אורך הסרטון {dur:.1f} שניות")
+    out = f"final_t{uuid.uuid4().hex[:8]}.mp4"
+    try:
+        pl.trim(d / req.name, d / out, req.start, end)
+    except pl.PipelineError as e:
+        (d / out).unlink(missing_ok=True)
+        raise HTTPException(400, str(e))
+    return {"name": out, "start": req.start, "end": round(end, 2)}
+
+
 # ------------------------------------------------------------------ paid generations survive a refresh
 
 class GenReq(BaseModel):

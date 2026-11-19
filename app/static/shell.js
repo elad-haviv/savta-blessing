@@ -49,6 +49,10 @@
   .sh-ins img { width:120px; border-radius:8px; }
   .sh-ins audio { width:260px; max-width:100%; }
   .sh-ins a { color:var(--accent,#b4572d); font-size:14px; }
+  .sh-card h3 span, .sh-prompt, .sh-it .t { unicode-bidi:plaintext; text-align:start; }
+  .sh-trim { font-size:13px; margin-top:12px; display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+  .sh-trim input { width:72px; padding:5px 7px; border:1px solid var(--line,#e8dfd3); border-radius:8px; font:inherit; }
+  .sh-trim button { background:var(--accent,#b4572d); color:#fff; border:0; border-radius:8px; padding:5px 12px; font-size:13px; cursor:pointer; font-family:inherit; }
   .sh-acts { display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; align-items:center; }
   .sh-acts a { color:var(--accent,#b4572d); }
   .sh-acts button { background:transparent; color:var(--err,#b3261e); border:1px solid var(--err,#b3261e); border-radius:8px; padding:4px 10px; font-size:13px; cursor:pointer; font-family:inherit; }
@@ -109,11 +113,29 @@
       <div class="sh-meta"><span class="sh-tag">${esc(KIND[o.kind] || o.kind)}</span> ${esc(when(o.created))} · ${esc(o.model || "")}${o.label ? " · " + esc(o.label) : ""}${o.cost != null ? ` · עלות $${(+o.cost).toFixed(2)}` : ""}</div>
       ${o.prompt ? `<div class="sh-prompt">${esc(o.prompt)}</div>` : ""}
       ${(o.inputs || []).length ? `<div class="sh-meta">קבצי המקור:</div><div class="sh-ins">${o.inputs.map(n => inputHtml(o, n)).join("")}</div>` : ""}
+      <div class="sh-trim">חיתוך (חינם, נוצר קובץ חדש והמקור נשאר): מ-<input type="number" data-ts min="0" step="0.1" value="0" inputmode="decimal">
+        עד <input type="number" data-te min="0.2" step="0.1" inputmode="decimal"> שניות <button type="button" data-trim>חתוך</button> <span data-tmsg></span></div>
       <div class="sh-acts"><a href="${url(o.job, o.name)}" download="${esc(o.kind)}-${o.created}.mp4">הורד MP4</a>
         <button type="button" data-del>מחק מההיסטוריה</button></div>
     </div>`;
+    const vid = v.querySelector("video"), te = v.querySelector("[data-te]");
+    vid.addEventListener("loadedmetadata", () => { if (!te.value) te.value = vid.duration.toFixed(1); te.max = vid.duration.toFixed(2); });
     v.onclick = async e => {
       if (e.target === v || e.target.closest(".sh-x")) { v.remove(); return; }
+      if (e.target.closest("[data-trim]")) {
+        const msg = v.querySelector("[data-tmsg]"), start = +v.querySelector("[data-ts]").value || 0, end = +te.value || 0;
+        if (end - start < 0.2) { msg.textContent = "הקטע קצר מדי"; return; }
+        msg.textContent = "חותך..."; e.target.disabled = true;
+        try {
+          const r = await postJSON(`/api/jobs/${o.job}/trim`, { name: o.name, start, end });
+          const j = await r.json(); if (!r.ok) throw new Error(j.detail || r.status);
+          await Shell.record(o.job, { name: j.name, kind: o.kind, title: o.title, model: o.model, prompt: o.prompt, cost: 0,
+                                      label: `${o.label ? o.label + " · " : ""}חיתוך ${start}–${j.end} שנ׳`, inputs: o.inputs || [] });
+          v.remove(); await load();
+          const n = items.find(x => x.name === j.name); if (n) view(n);
+        } catch (x) { msg.textContent = "החיתוך נכשל: " + x.message; e.target.disabled = false; }
+        return;
+      }
       if (e.target.closest("[data-del]")) {
         if (!confirm("למחוק את הסרטון הזה מהשרת?")) return;
         try { await fetch(`/api/jobs/${o.job}/outputs/${encodeURIComponent(o.name)}`, { method: "DELETE" }); } catch (x) {}
