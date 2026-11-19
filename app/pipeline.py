@@ -175,6 +175,16 @@ def trim(src: Path, out: Path, start: float, end: float) -> Path:
     return out
 
 
+def filmstrip(video: Path, out: Path, n: int = 10) -> Path:
+    """n evenly spaced frames side by side, for the trim slider."""
+    _, _, dur = video_info(video)
+    run(["ffmpeg", "-y", "-i", str(video), "-an", "-vf", f"fps={n / max(dur, 0.1):.4f},scale=-2:96,tile={n}x1",
+         "-frames:v", "1", "-q:v", "5", str(out)])
+    if not out.is_file():
+        raise PipelineError("לא נוצר פס תמונות")
+    return out
+
+
 def make_thumb(video: Path, out: Path) -> Path:
     """Small poster image for the history list."""
     _, _, dur = video_info(video)

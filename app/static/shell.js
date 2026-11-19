@@ -50,9 +50,23 @@
   .sh-ins audio { width:260px; max-width:100%; }
   .sh-ins a { color:var(--accent,#b4572d); font-size:14px; }
   .sh-card h3 span, .sh-prompt, .sh-it .t { unicode-bidi:plaintext; text-align:start; }
-  .sh-trim { font-size:13px; margin-top:12px; display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
-  .sh-trim input { width:72px; padding:5px 7px; border:1px solid var(--line,#e8dfd3); border-radius:8px; font:inherit; }
-  .sh-trim button { background:var(--accent,#b4572d); color:#fff; border:0; border-radius:8px; padding:5px 12px; font-size:13px; cursor:pointer; font-family:inherit; }
+  .sh-tr { margin:14px 6px 0; }
+  .sh-strip { position:relative; height:56px; border-radius:8px; background:#2b2420 center/100% 100% no-repeat; touch-action:none; user-select:none; -webkit-user-select:none; }
+  .sh-dim { position:absolute; top:0; bottom:0; background:rgba(0,0,0,.6); pointer-events:none; }
+  .sh-win { position:absolute; top:-4px; bottom:-4px; border-top:4px solid #f5c542; border-bottom:4px solid #f5c542; cursor:grab; }
+  .sh-win .h { position:absolute; top:-4px; bottom:-4px; width:18px; background:#f5c542; display:flex; align-items:center; justify-content:center; cursor:ew-resize; }
+  .sh-win .h::before { content:""; position:absolute; inset:0 -12px; }  /* bigger touch target */
+  .sh-win .h i { width:3px; height:20px; border-radius:2px; background:#5a4300; }
+  .sh-win .h[data-h="s"] { left:-18px; border-radius:6px 0 0 6px; }
+  .sh-win .h[data-h="e"] { right:-18px; border-radius:0 6px 6px 0; }
+  .sh-ph { position:absolute; top:-6px; bottom:-6px; width:2px; margin-left:-1px; background:#fff; box-shadow:0 0 3px rgba(0,0,0,.6); pointer-events:none; }
+  .sh-trinfo { display:flex; flex-wrap:wrap; gap:8px; align-items:center; font-size:14px; margin-top:12px; }
+  .sh-trinfo b { font-variant-numeric:tabular-nums; }
+  .sh-trinfo button { background:var(--accent,#b4572d); color:#fff; border:0; border-radius:8px; padding:7px 14px; font-size:14px; cursor:pointer; font-family:inherit; }
+  .sh-trinfo button:disabled { opacity:.5; }
+  .sh-fine { font-size:13px; margin-top:8px; color:var(--muted,#8a7f76); }
+  .sh-fine summary { cursor:pointer; }
+  .sh-fine input { width:72px; padding:5px 7px; border:1px solid var(--line,#e8dfd3); border-radius:8px; font:inherit; margin:6px 4px 0; }
   .sh-acts { display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; align-items:center; }
   .sh-acts a { color:var(--accent,#b4572d); }
   .sh-acts button { background:transparent; color:var(--err,#b3261e); border:1px solid var(--err,#b3261e); border-radius:8px; padding:4px 10px; font-size:13px; cursor:pointer; font-family:inherit; }
@@ -110,27 +124,81 @@
     v.innerHTML = `<div class="sh-card">
       <h3><span>${esc(o.title || "סרטון")}</span><button class="sh-x" aria-label="סגור">✕</button></h3>
       <video controls playsinline src="${url(o.job, o.name)}"${o.thumb ? ` poster="${url(o.job, o.thumb)}"` : ""}></video>
+      <div class="sh-tr" dir="ltr"><div class="sh-strip" data-strip>
+        <div class="sh-dim" data-dl></div><div class="sh-dim" data-dr></div>
+        <div class="sh-win" data-win><span class="h" data-h="s"><i></i></span><span class="h" data-h="e"><i></i></span></div>
+        <div class="sh-ph" data-ph></div></div></div>
+      <div class="sh-trinfo"><span>חיתוך: <b data-tinfo>…</b></span><button type="button" data-trim>שמור את הקטע</button><span data-tmsg></span></div>
+      <details class="sh-fine"><summary>כוונון מדויק (חינם, נוצר קובץ חדש והמקור נשאר)</summary>
+        מ-<input type="number" data-ts min="0" step="0.1" inputmode="decimal"> עד <input type="number" data-te min="0.2" step="0.1" inputmode="decimal"> שניות</details>
       <div class="sh-meta"><span class="sh-tag">${esc(KIND[o.kind] || o.kind)}</span> ${esc(when(o.created))} · ${esc(o.model || "")}${o.label ? " · " + esc(o.label) : ""}${o.cost != null ? ` · עלות $${(+o.cost).toFixed(2)}` : ""}</div>
       ${o.prompt ? `<div class="sh-prompt">${esc(o.prompt)}</div>` : ""}
       ${(o.inputs || []).length ? `<div class="sh-meta">קבצי המקור:</div><div class="sh-ins">${o.inputs.map(n => inputHtml(o, n)).join("")}</div>` : ""}
-      <div class="sh-trim">חיתוך (חינם, נוצר קובץ חדש והמקור נשאר): מ-<input type="number" data-ts min="0" step="0.1" value="0" inputmode="decimal">
-        עד <input type="number" data-te min="0.2" step="0.1" inputmode="decimal"> שניות <button type="button" data-trim>חתוך</button> <span data-tmsg></span></div>
       <div class="sh-acts"><a href="${url(o.job, o.name)}" download="${esc(o.kind)}-${o.created}.mp4">הורד MP4</a>
         <button type="button" data-del>מחק מההיסטוריה</button></div>
     </div>`;
-    const vid = v.querySelector("video"), te = v.querySelector("[data-te]");
-    vid.addEventListener("loadedmetadata", () => { if (!te.value) te.value = vid.duration.toFixed(1); te.max = vid.duration.toFixed(2); });
+    // ---- WhatsApp-style trimmer: drag either handle, or the window itself; playback loops inside the selection
+    const vid = v.querySelector("video"), q = s => v.querySelector(s);
+    const stripEl = q("[data-strip]"), win = q("[data-win]"), dl = q("[data-dl]"), dr = q("[data-dr]"), ph = q("[data-ph]");
+    const ts = q("[data-ts]"), te = q("[data-te]"), info = q("[data-tinfo]");
+    const T = { s: 0, e: 0, d: 0 }, MIN = 0.2;
+    const clamp = (x, a, b) => Math.min(Math.max(x, a), b), snap = x => Math.round(x * 10) / 10;
+    function draw() {
+      if (!T.d) return;
+      const p = x => (x / T.d * 100) + "%";
+      dl.style.left = "0"; dl.style.width = p(T.s); dr.style.left = p(T.e); dr.style.right = "0";
+      win.style.left = p(T.s); win.style.width = p(T.e - T.s);
+      info.textContent = `${T.s.toFixed(1)} – ${T.e.toFixed(1)}  ·  ${(T.e - T.s).toFixed(1)} שנ׳`;
+      if (document.activeElement !== ts) ts.value = T.s.toFixed(1);
+      if (document.activeElement !== te) te.value = T.e.toFixed(1);
+    }
+    vid.addEventListener("loadedmetadata", async () => {
+      T.d = vid.duration; T.s = 0; T.e = T.d; te.max = T.d.toFixed(2); ts.max = (T.d - MIN).toFixed(2); draw();
+      try {
+        const r = await fetch(`/api/jobs/${o.job}/strip?name=${encodeURIComponent(o.name)}`);
+        if (r.ok) stripEl.style.backgroundImage = `url("${url(o.job, (await r.json()).name)}")`;
+      } catch (x) {}
+    });
+    vid.addEventListener("timeupdate", () => {
+      if (!T.d) return;
+      if (!vid.paused && vid.currentTime >= T.e - 0.03) vid.currentTime = T.s;
+      ph.style.left = (vid.currentTime / T.d * 100) + "%";
+    });
+    vid.addEventListener("play", () => { if (vid.currentTime < T.s || vid.currentTime >= T.e - 0.05) vid.currentTime = T.s; });
+    let drag = null;
+    const timeAt = e => { const r = stripEl.getBoundingClientRect(); return clamp((e.clientX - r.left) / r.width * T.d, 0, T.d); };
+    stripEl.addEventListener("pointerdown", e => {
+      if (!T.d) return;
+      const t = timeAt(e), h = e.target.closest("[data-h]");
+      if (h) drag = { k: h.dataset.h };
+      else if (e.target.closest("[data-win]")) drag = { k: "move", off: t - T.s, len: T.e - T.s };
+      else { vid.currentTime = clamp(t, T.s, T.e); return; }  // a tap outside the window just seeks
+      stripEl.setPointerCapture(e.pointerId); vid.pause(); e.preventDefault();
+    });
+    stripEl.addEventListener("pointermove", e => {
+      if (!drag) return;
+      const t = timeAt(e);
+      if (drag.k === "s") { T.s = clamp(snap(t), 0, T.e - MIN); vid.currentTime = T.s; }
+      else if (drag.k === "e") { T.e = Math.min(clamp(snap(t), T.s + MIN, T.d), T.d); if (T.d - T.e < 0.05) T.e = T.d; vid.currentTime = Math.max(T.s, T.e - 0.05); }
+      else { T.s = clamp(snap(t - drag.off), 0, Math.max(0, T.d - drag.len)); T.e = Math.min(T.s + drag.len, T.d); vid.currentTime = T.s; }
+      draw();
+    });
+    const endDrag = () => { if (drag) { drag = null; vid.currentTime = T.s; } };
+    stripEl.addEventListener("pointerup", endDrag); stripEl.addEventListener("pointercancel", endDrag);
+    ts.addEventListener("change", () => { T.s = clamp(+ts.value || 0, 0, T.e - MIN); vid.currentTime = T.s; draw(); });
+    te.addEventListener("change", () => { T.e = clamp(+te.value || T.d, T.s + MIN, T.d); vid.currentTime = Math.max(T.s, T.e - 0.05); draw(); });
     v.onclick = async e => {
       if (e.target === v || e.target.closest(".sh-x")) { v.remove(); return; }
       if (e.target.closest("[data-trim]")) {
-        const msg = v.querySelector("[data-tmsg]"), start = +v.querySelector("[data-ts]").value || 0, end = +te.value || 0;
-        if (end - start < 0.2) { msg.textContent = "הקטע קצר מדי"; return; }
-        msg.textContent = "חותך..."; e.target.disabled = true;
+        const msg = v.querySelector("[data-tmsg]"), start = snap(T.s), end = T.e >= T.d - 0.05 ? T.d : snap(T.e);
+        if (!T.d) return;
+        if (start <= 0.01 && end >= T.d - 0.01) { msg.textContent = "גרור את הקצוות כדי לבחור קטע"; return; }
+        msg.textContent = "שומר את הקטע..."; e.target.disabled = true;
         try {
           const r = await postJSON(`/api/jobs/${o.job}/trim`, { name: o.name, start, end });
           const j = await r.json(); if (!r.ok) throw new Error(j.detail || r.status);
           await Shell.record(o.job, { name: j.name, kind: o.kind, title: o.title, model: o.model, prompt: o.prompt, cost: 0,
-                                      label: `${o.label ? o.label + " · " : ""}חיתוך ${start}–${j.end} שנ׳`, inputs: o.inputs || [] });
+                                      label: `${o.label ? o.label + " · " : ""}חיתוך ${start}–${(+j.end).toFixed(1)} שנ׳`, inputs: o.inputs || [] });
           v.remove(); await load();
           const n = items.find(x => x.name === j.name); if (n) view(n);
         } catch (x) { msg.textContent = "החיתוך נכשל: " + x.message; e.target.disabled = false; }

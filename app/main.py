@@ -666,6 +666,21 @@ def _jobs():
             continue
 
 
+@app.get("/api/jobs/{job_id}/strip", dependencies=[Depends(require_auth)])
+def strip(job_id: str, name: str):
+    """Filmstrip image of a saved video (made once, then reused) for the trim slider."""
+    d = jobdir(job_id)
+    if not SAFE_NAME.match(name) or not name.startswith(("final_", "part_")) or not (d / name).is_file():
+        raise HTTPException(404)
+    out = d / f"strip_{Path(name).stem}.jpg"
+    if not out.is_file():
+        try:
+            pl.filmstrip(d / name, out)
+        except pl.PipelineError as e:
+            raise HTTPException(400, str(e))
+    return {"name": out.name}
+
+
 class TrimReq(BaseModel):
     name: str
     start: float = Field(0, ge=0, le=3600)
@@ -784,6 +799,7 @@ def delete_output(job_id: str, name: str):
         raise HTTPException(404)
     (d / name).unlink(missing_ok=True)
     (d / f"thumb_{Path(name).stem}.jpg").unlink(missing_ok=True)
+    (d / f"strip_{Path(name).stem}.jpg").unlink(missing_ok=True)
     mutate(job_id, lambda s: s.update(outputs=[o for o in s.get("outputs", []) if o["name"] != name]))
     return {"ok": True}
 
