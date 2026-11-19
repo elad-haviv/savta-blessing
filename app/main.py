@@ -402,11 +402,16 @@ async def add_part(job_id: str, seconds: float = Form(...), url: str = Form(""),
             pl.fetch_public_url(url, part)
         else:
             raise pl.PipelineError("לא התקבל קליפ")
-        frame = f"frame_c{uid}.jpg"
-        pl.chain_frame(part, seconds, d / frame)
+        pl.video_info(part)  # reject anything that isn't a readable video
     except pl.PipelineError as e:
         part.unlink(missing_ok=True)
         raise HTTPException(400, str(e))
+    # the frame is only needed to chain the next clip; a paid video is never thrown away because of it
+    frame = f"frame_c{uid}.jpg"
+    try:
+        pl.chain_frame(part, seconds, d / frame)
+    except pl.PipelineError:
+        frame = None
     return {"name": part.name, "frame": frame}
 
 

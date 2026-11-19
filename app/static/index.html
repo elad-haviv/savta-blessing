@@ -518,7 +518,7 @@ async function makeVideo(model, frame, audio, prompt, item) {
       } catch (e) { lastErr = e; if (/401|402/.test(e.message)) break; }
     }
     if (!part) throw new Error(`קטע ${i + 1} מתוך ${chunks.length} נכשל: ${lastErr.message}`);
-    parts.push({ name: part.name, seconds: chunks[i].seconds }); cur = part.frame;
+    parts.push({ name: part.name, seconds: chunks[i].seconds }); cur = part.frame || cur;
   }
   item.progress = "מחבר את הקטעים"; item.provider_status = ""; renderVideos();
   const fin = await post(`/api/jobs/${S.job.id}/stitch`, { parts, audio: staged.name });

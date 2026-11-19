@@ -394,7 +394,7 @@ async function makeVideo(model, prompt, opts, item) {
       } catch (e) { lastErr = e; if (/401|402/.test(e.message)) break; }
     }
     if (!part) throw new Error(chunks.length > 1 ? `קטע ${i + 1} מתוך ${chunks.length} נכשל: ${lastErr.message}` : lastErr.message);
-    parts.push({ name: part.name, seconds: chunks[i].seconds }); frame = part.frame;
+    parts.push({ name: part.name, seconds: chunks[i].seconds }); frame = part.frame || frame;
   }
   item.parts = parts;
   item.progress = opts.subs ? "מחבר וצורב כתוביות" : "מחבר את הסרטון"; item.provider_status = ""; renderVideos();

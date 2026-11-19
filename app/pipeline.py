@@ -177,9 +177,23 @@ def make_thumb(video: Path, out: Path) -> Path:
 
 
 def chain_frame(part: Path, seconds: float, out: Path) -> Path:
-    """The frame the next clip should start from: where this clip's audio ends (or its last frame)."""
+    """The frame the next clip should start from: where this clip's audio ends (or its last frame).
+    The container can be longer than the picture (e.g. a soundtrack that runs past the last frame),
+    so step back until a frame comes out, and finally just keep the last decoded frame."""
     _, _, dur = video_info(part)
-    return extract_frame_at(part, max(0.0, min(seconds, dur) - 0.07), out)
+    for t in (min(seconds, dur) - 0.07, dur - 0.5, dur - 1.5, dur / 2):
+        out.unlink(missing_ok=True)
+        try:
+            extract_frame_at(part, max(0.0, t), out)
+        except PipelineError:
+            continue
+        if out.is_file() and out.stat().st_size > 0:
+            return out
+    out.unlink(missing_ok=True)
+    run(["ffmpeg", "-y", "-i", str(part), "-an", "-update", "1", "-q:v", "2", str(out)])
+    if not (out.is_file() and out.stat().st_size > 0):
+        raise PipelineError("לא הצלחתי לחלץ פריים מהקליפ")
+    return out
 
 
 SUB_FONT = os.environ.get("SUB_FONT", "Noto Sans Hebrew")
