@@ -116,6 +116,10 @@
       <div id="vres-wrap"><label>רזולוציה</label><select id="vres"></select></div>
       <div><label>פיצול לקטעים: אורך מרבי בשניות (0 = בלי)</label><input type="number" id="vsplit" min="0" max="120" step="1" value="0"></div>
     </div>
+    <details id="adv-wrap" class="hidden" style="margin-top:12px"><summary style="cursor:pointer;color:var(--accent);font-weight:600">הגדרות מתקדמות של המודל</summary>
+      <div class="note">השדות משתנים לפי המודל שנבחר, מתוך מה ש-OpenRouter מדווח שהמודל מקבל. שדה ריק = ברירת המחדל של המודל. אם המודל דוחה הגדרה, הסרטון יופק בלעדיה ותופיע על כך הערה.</div>
+      <div id="adv"></div>
+    </details>
     <label>הנחיית תנועה (אופציונלי, באנגלית עובד הכי טוב. ריק = תנועות טבעיות שמתאימות לדיבור)</label>
     <input type="text" id="vprompt" dir="auto" placeholder="smiles warmly, nods, gestures with her hands while talking">
     <label class="inline"><input type="checkbox" id="sub-on" checked> לצרוב כתוביות</label>
@@ -336,7 +340,14 @@ async function genClip(model, imgUrl, audUrl, prompt, seconds, item) {
   if ($("vmotion").value && pass.includes("expressiveness")) hg.expressiveness = $("vmotion").value;
   if ($("vmotion").value && pass.includes("motion_expressiveness")) hg.motion_expressiveness = $("vmotion").value;
   if (prompt && pass.includes("motion_prompt")) hg.motion_prompt = prompt;
-  if (Object.keys(hg).length) payload.provider = { options: { heygen: hg } };
+  const adv = advValues(), popts = { ...hg, ...adv.pass };
+  if (Object.keys(popts).length) {
+    // Veo is the one family that wants its options nested under "parameters"
+    const body = /^google\/veo/.test(model) ? { parameters: popts } : popts, options = {};
+    for (const slug of await providerSlugs(model)) options[slug] = body;
+    payload.provider = { options };
+  }
+  Object.assign(payload, adv.top);
   if (info.res && $("vres").value) payload.resolution = $("vres").value;
   if (!model.startsWith("heygen/")) {
     payload.duration = pickDuration(info.durs, seconds);
@@ -353,6 +364,7 @@ async function genClip(model, imgUrl, audUrl, prompt, seconds, item) {
     catch (e) { firstErr = firstErr || e; if (/401|402/.test(e.message)) throw e; }
   }
   if (!job) throw firstErr;
+  if (firstErr && payload.provider) item.note = `המודל דחה את ההגדרות המתקדמות או את רמת התנועה (${firstErr.message.slice(0, 160)}), והסרטון הופק בלעדיהן.`;
   // remember the paid job on the server right away, so a refresh or a locked phone can't lose it
   (item.genIds = item.genIds || []).push(job.id);
   if (item.track) window.Shell?.trackGen(S.job.id, { ...item.track, gen_id: job.id, polling_url: job.polling_url || "" });
@@ -426,6 +438,59 @@ function onModel() {
     : pass.includes("motion_expressiveness") ? [["default", "רגיל, עם תנועות ידיים שמתאימות לדיבור"], ["less", "רגוע יותר, פחות תנועות"]] : [];
   $("vmotion-wrap").classList.toggle("hidden", !levels.length);
   $("vmotion").innerHTML = levels.map(([v, l]) => `<option value="${v}">${l}</option>`).join("");
+  renderAdv(info);
+}
+
+// ---- advanced, model-specific settings (built from the model's own capability list)
+const ADV_SKIP = ["motion_prompt", "expressiveness", "motion_expressiveness", "voice_id", "voice_settings", "caption", "title",
+                  "req_key", "output_format", "aspectRatio", "return_last_frame", "keyframes"];
+const ADV_KNOWN = {
+  watermark: ["bool", "סימן מים על הסרטון"], aigc_watermark: ["bool", "סימן מים של תוכן AI"],
+  remove_background: ["bool", "הסרת הרקע מהתמונה"], enhancePrompt: ["bool", "שיפור אוטומטי של ההנחיה"],
+  prompt_enhancement: ["bool", "שיפור אוטומטי של ההנחיה"], prompt_optimizer: ["bool", "שיפור אוטומטי של ההנחיה"],
+  fast_pretreatment: ["bool", "עיבוד מקדים מהיר"], draft: ["bool", "מצב טיוטה (מהיר, איכות נמוכה)"],
+  cfg_scale: ["num", "היצמדות להנחיה (מספר, לרוב 0 עד 1)"], conditioningScale: ["num", "משקל התמונה מול ההנחיה (מספר)"],
+  safety_tolerance: ["num", "סף סינון תוכן (מספר)"],
+  negativePrompt: ["text", "מה לא לכלול בסרטון (באנגלית)"], negative_prompt: ["text", "מה לא לכלול בסרטון (באנגלית)"],
+  fit: ["text", "התאמת התמונה למסגרת (ערך לפי תיעוד הספק, למשל cover או contain)"],
+  background: ["text", "רקע חלופי (ערך לפי תיעוד הספק)"], task: ["text", "סוג משימה (ערך לפי תיעוד הספק)"],
+  personGeneration: ["text", "הרשאת יצירת אנשים (ערך לפי תיעוד הספק, למשל allow_all)"],
+  contentModeration: ["text", "סינון תוכן (ערך לפי תיעוד הספק)"], version: ["text", "גרסת מודל (ערך לפי תיעוד הספק)"],
+};
+function renderAdv(info) {
+  const rows = [];
+  if (info.ars?.length) rows.push(`<div><label>יחס תמונה</label><select data-top="aspect_ratio"><option value="">ברירת המחדל של המודל</option>${info.ars.map(a => `<option value="${esc(a)}">${esc(a)}</option>`).join("")}</select></div>`);
+  if (info.seed) rows.push(`<div><label>Seed: מספר קבוע נותן תוצאה דומה בכל הפקה (ריק = אקראי)</label><input type="number" data-top="seed" min="0" step="1" placeholder="אקראי"></div>`);
+  for (const k of (info.pass || []).filter(k => !ADV_SKIP.includes(k))) {
+    const [type, label] = ADV_KNOWN[k] || ["text", "פרמטר של הספק (ערך לפי התיעוד שלו)"];
+    const lab = `<label>${esc(label)} <small dir="ltr">${esc(k)}</small></label>`;
+    rows.push(type === "bool" ? `<div>${lab}<select data-pass="${esc(k)}"><option value="">ברירת המחדל של המודל</option><option value="true">כן</option><option value="false">לא</option></select></div>`
+      : `<div>${lab}<input type="${type === "num" ? "number" : "text"}" ${type === "num" ? 'step="any"' : 'dir="auto"'} data-pass="${esc(k)}"></div>`);
+  }
+  $("adv").innerHTML = rows.join("");
+  $("adv-wrap").classList.toggle("hidden", !rows.length);
+}
+const advParse = v => { v = v.trim(); if (v === "true") return true; if (v === "false") return false;
+  if (/^-?\d+(\.\d+)?$/.test(v)) return +v; if (/^[\[{"]/.test(v)) { try { return JSON.parse(v); } catch (e) {} } return v; };
+function advValues() {
+  const top = {}, pass = {}, labels = [];
+  for (const el of $("adv").querySelectorAll("[data-top],[data-pass]")) {
+    if (el.value.trim() === "") continue;
+    const k = el.dataset.top || el.dataset.pass, v = advParse(el.value);
+    (el.dataset.top ? top : pass)[k] = v;
+    labels.push(k === "aspect_ratio" ? String(v) : `${k}: ${typeof v === "object" ? "…" : v}`);
+  }
+  return { top, pass, labels };
+}
+// provider options are keyed by the slug of whichever provider serves the model, so ask OpenRouter who that is
+const provSlugs = {};
+async function providerSlugs(model) {
+  if (provSlugs[model]) return provSlugs[model];
+  let tags = [];
+  try { const j = await (await fetch(`${OR}/models/${model}/endpoints`)).json(); tags = (j.data?.endpoints || []).map(e => e.tag).filter(Boolean); } catch (e) {}
+  const out = [...new Set([...tags, ...tags.map(t => t.split("/")[0]), model.split("/")[0]])];
+  if (tags.length) provSlugs[model] = out;
+  return out;
 }
 $("vidmodel").onchange = onModel;
 
@@ -494,7 +559,8 @@ async function loadModels() {
       .filter(m => m.id !== "heygen/heygen-video-1")  // generates its own soundtrack instead of following ours
       .map(m => ({ id: m.id, label: m.name || m.id, desc: m.description, lipsync: /^heygen\/.*avatar/.test(m.id),
                    pass: caps[m.id]?.allowed_passthrough_parameters || [],
-                   durs: caps[m.id]?.supported_durations || null, res: caps[m.id]?.supported_resolutions || null }))
+                   durs: caps[m.id]?.supported_durations || null, res: caps[m.id]?.supported_resolutions || null,
+                   ars: caps[m.id]?.supported_aspect_ratios || null, seed: !!caps[m.id]?.seed }))
       .sort((a, b) => b.lipsync - a.lipsync || b.id.localeCompare(a.id));
   } catch (e) { list = []; }
   if (!list.length) list = S.cfg.video_models.map(m => ({ ...m, lipsync: m.id.startsWith("heygen/"), pass: m.id === "heygen/avatar-iv" ? ["expressiveness", "motion_prompt"] : [] }));
@@ -510,7 +576,7 @@ $("mk-video").onclick = async () => {
   $("videoerr").textContent = "";
   if (!getKey()) { $("videoerr").textContent = "הזן מפתח OpenRouter בראש הדף"; return; }
   const opts = subOpts();
-  const item = { id: Math.random().toString(36).slice(2, 8), status: "working", model: $("vidmodel").value, label: subLabel(opts) };
+  const item = { id: Math.random().toString(36).slice(2, 8), status: "working", model: $("vidmodel").value, label: [subLabel(opts), ...advValues().labels].join(" · ") };
   S.videos.push(item); renderVideos(); $("mk-video").disabled = true;
   try {
     Object.assign(item, await makeVideo(item.model, $("vprompt").value.trim(), opts, item), { status: "done" }); saveVids();
@@ -546,6 +612,7 @@ async function reburn(id) {
 function renderVideos() {
   $("videos").innerHTML = S.videos.slice().reverse().map(v => `<div class="item">
     <span class="tag">${esc(v.model)}</span> <span class="tag">${esc(v.label || "")}</span>
+    ${v.note ? `<div class="note">${esc(v.note)}</div>` : ""}
     ${v.status === "working" ? `<div class="status">${v.parts ? "" : "מפיק סרטון (1-5 דקות" + (/קטע/.test(v.progress || "") ? " לכל קטע" : "") + ")... "}${esc(v.progress || "")} ${esc(v.provider_status || "")}</div>`
       : v.status === "error" ? `<div class="error">${esc(v.error)}</div>`
       : `<video controls src="${esc(v.href)}"></video><div class="status"><a href="${esc(v.href)}" download="talking.mp4">הורד MP4</a>${v.cost != null ? ` · עלות $${(+v.cost).toFixed(2)}` : ""}
