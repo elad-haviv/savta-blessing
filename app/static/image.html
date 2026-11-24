@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>תמונה מטקסט</title>
+<style>
+  :root { --bg:#faf6f0; --card:#fff; --ink:#2b2420; --muted:#8a7f76; --accent:#b4572d; --line:#e8dfd3; --ok:#2e7d4f; --err:#b3261e; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family: "Segoe UI", Arial, sans-serif; line-height:1.55; }
+  main { max-width: 860px; margin: 0 auto; padding: 24px 16px 80px; }
+  h1 { font-size: 26px; margin: 8px 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .sub a { color: var(--accent); }
+  section { background: var(--card); border:1px solid var(--line); border-radius: 14px; padding: 18px 20px; margin-bottom: 18px; }
+  section h2 { font-size: 17px; margin: 0 0 12px; }
+  .hidden { display:none !important; }
+  button { background: var(--accent); color:#fff; border:0; border-radius:10px; padding: 10px 18px; font-size:15px; cursor:pointer; font-family:inherit; }
+  button:disabled { opacity:.5; cursor:default; }
+  button.ghost { background:transparent; color:var(--accent); border:1px solid var(--accent); }
+  button.small { padding:5px 12px; font-size:13px; }
+  input[type=text], input[type=password], select, textarea { width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:9px; font: inherit; background:#fff; color:inherit; }
+  input[type=password] { direction:ltr; text-align:left; }
+  textarea { min-height: 110px; resize: vertical; }
+  label { display:block; font-size:14px; color:var(--muted); margin: 12px 0 4px; }
+  label.inline { display:flex; gap:8px; align-items:center; margin-top:10px; color:var(--ink); }
+  label.inline input { width:auto; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; }
+  .row > * { flex:1; min-width: 140px; }
+  .row > button { flex:0 0 auto; }
+  .picks { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+  @media (max-width: 520px) { .picks { grid-template-columns: 1fr; } }
+  .pick { border:2px dashed var(--line); border-radius:12px; padding:14px; text-align:center; color:var(--muted); cursor:pointer; min-height:150px; display:flex; flex-direction:column; justify-content:center; align-items:center; gap:6px; }
+  .pick.over { border-color: var(--accent); color: var(--accent); }
+  .pick.set { border-style:solid; border-color: var(--accent); color: var(--ink); }
+  .pick b { color: var(--ink); }
+  .pick .pc { display:flex; flex-direction:column; align-items:center; gap:6px; }
+  .pick .paste { margin-top:6px; }
+  .refs { display:grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap:10px; }
+  .ref { position:relative; border-radius:12px; overflow:hidden; border:1px solid var(--line); background:#f4ece1; aspect-ratio: 1 / 1; }
+  .ref img { width:100%; height:100%; object-fit:cover; display:block; }
+  .ref .rm { position:absolute; top:6px; left:6px; width:30px; height:30px; padding:0; border-radius:50%; background:rgba(0,0,0,.6); font-size:15px; line-height:30px; }
+  .ref .num { position:absolute; bottom:6px; right:6px; background:rgba(0,0,0,.6); color:#fff; border-radius:6px; font-size:12px; padding:1px 7px; }
+  .refs .pick { min-height:0; aspect-ratio: 1 / 1; padding:8px; }
+  .pick img { max-width:100%; max-height:200px; border-radius:8px; object-fit:contain; }
+  .status { margin-top:10px; color:var(--muted); }
+  .error { color:var(--err); margin-top:8px; white-space: pre-wrap; }
+  .item { border-top:1px solid var(--line); padding:12px 0; }
+  .item:first-of-type { border-top:0; }
+  video { width:100%; margin-top:8px; border-radius:10px; }
+  .tag { unicode-bidi:isolate; font-size:12px; background:#f4ece1; border-radius:6px; padding:2px 8px; color:var(--muted); }
+  .warn { background:#fff4e0; border:1px solid #f0d9a8; border-radius:10px; padding:10px 12px; font-size:14px; margin-top:10px; }
+  .okbox { background:#eaf6ee; border:1px solid #b9dcc5; border-radius:10px; padding:10px 12px; font-size:14px; }
+  .note { font-size:13px; color:var(--muted); margin-top:8px; }
+  .prompt-sm { font-size:13px; color:var(--muted); margin-top:4px; }
+  .gal { display:grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap:12px; margin-top:8px; }
+  .gal figure { margin:0; }
+  .gal img { width:100%; border-radius:10px; display:block; background:#f4ece1; }
+  .gal figcaption { font-size:13px; margin-top:6px; display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .gal a { color:var(--accent); }
+  input[type=number] { width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:9px; font: inherit; background:#fff; color:inherit; }
+</style>
+</head>
+<body>
+<main>
+  <h1>תמונה מטקסט</h1>
+  <p class="sub">כותבים תיאור ומקבלים תמונה. אפשר לצרף תמונות רפרנס (דמות, סגנון, מקום) או תמונה לעריכה. <a href="/text">סרטון מטקסט</a> · <a href="/frames">סרטון מתמונות</a></p>
+
+  <section id="s-key">
+    <h2>מפתח OpenRouter שלך</h2>
+    <div id="key-form">
+      <div class="row">
+        <div><input type="password" id="keyin" placeholder="sk-or-v1-..." autocomplete="off" spellcheck="false"></div>
+        <button id="key-save">שמור</button>
+      </div>
+      <label class="inline"><input type="checkbox" id="key-remember" checked> זכור בדפדפן הזה (אחרת רק עד סגירת הלשונית)</label>
+    </div>
+    <div id="key-ok" class="okbox hidden"></div>
+    <p class="note">אותו מפתח כמו בשאר העמודים. הוא נשמר רק בדפדפן שלך ונשלח רק אל openrouter.ai.</p>
+  </section>
+
+  <section>
+    <h2>1. תיאור ותמונות רפרנס</h2>
+    <label style="margin-top:0">תיאור התמונה: מה רואים, סגנון, תאורה, זווית. עם רפרנסים אפשר להפנות אליהם לפי מספר, או לבקש שינוי בתמונה (באנגלית עובד הכי טוב)</label>
+    <textarea id="prompt" dir="auto" placeholder="A cozy reading nook by a rainy window, warm lamp light, watercolor illustration style."></textarea>
+    <label>תמונות רפרנס (לא חובה)</label>
+    <div class="refs" id="refs"></div>
+    <div class="note" id="refcount"></div>
+    <div class="error" id="pasteerr"></div>
+    <input type="file" id="f-refs" accept="image/*,.heic,.heif" multiple class="hidden">
+  </section>
+
+  <section>
+    <h2>2. מודל והגדרות</h2>
+    <label>מודל תמונה</label>
+    <select id="model"><option>טוען רשימת מודלים...</option></select>
+    <div class="prompt-sm" id="model-info"></div>
+    <div class="row" id="params"></div>
+    <div class="note">השדות משתנים לפי המודל שנבחר. שדה שנשאר על ברירת המחדל לא נשלח.</div>
+    <div class="warn hidden" id="nopub">לא הוגדר PUBLIC_BASE_URL בשרת: תמונות הרפרנס יישלחו ל-OpenRouter כ-data URI.</div>
+    <div style="margin-top:14px"><button id="go">צור תמונה</button></div>
+    <div class="error" id="err"></div>
+  </section>
+
+  <section id="s-results" class="hidden">
+    <h2>3. תמונות</h2>
+    <div id="pics"></div>
+    <p class="note">התמונות נשמרות בשרת לשבועיים ומופיעות גם בהיסטוריה (תפריט ☰).</p>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const OR = "https://openrouter.ai/api/v1";
+const KEY_NAME = "savta_or_key";
+const PICS_KEY = "savta_image_pics";
+const HARD_MAX_REFS = 16;
+
+let S = { cfg: null, models: [], refs: [], job: null, uploadedSig: null, pics: [] };
+
+// ================================================================ key (BYOK, shared with the other pages)
+function getKey() { try { return localStorage.getItem(KEY_NAME) || sessionStorage.getItem(KEY_NAME) || ""; } catch (e) { return ""; } }
+function setKey(k, remember) {
+  try { localStorage.removeItem(KEY_NAME); sessionStorage.removeItem(KEY_NAME); (remember ? localStorage : sessionStorage).setItem(KEY_NAME, k); } catch (e) {}
+}
+function clearKey() { try { localStorage.removeItem(KEY_NAME); sessionStorage.removeItem(KEY_NAME); } catch (e) {} }
+function renderKey() {
+  const k = getKey();
+  $("key-form").classList.toggle("hidden", !!k);
+  $("key-ok").classList.toggle("hidden", !k);
+  $("key-ok").innerHTML = k ? `מפתח שמור בדפדפן: <b dir="ltr">${esc(k.slice(0, 9))}…${esc(k.slice(-4))}</b> <button class="ghost small" id="key-del" style="margin-inline-start:10px">מחק מפתח</button>` : "";
+  if (k) $("key-del").onclick = () => { clearKey(); renderKey(); };
+}
+$("key-save").onclick = () => {
+  const k = $("keyin").value.trim();
+  if (!/^sk-or-/.test(k)) { alert("זה לא נראה כמו מפתח OpenRouter (מתחיל ב-sk-or-)"); return; }
+  setKey(k, $("key-remember").checked); $("keyin").value = ""; renderKey();
+};
+
+async function orFetch(path, opts = {}) {
+  const key = getKey();
+  if (!key) throw new Error("לא הוזן מפתח OpenRouter");
+  const headers = { Authorization: `Bearer ${key}`, "X-Title": "Savta Blessing", ...(opts.headers || {}) };
+  let r;
+  try { r = await fetch(path.startsWith("http") ? path : OR + path, { ...opts, headers }); }
+  catch (e) { throw new Error("הבקשה ל-OpenRouter נחסמה או נכשלה ברשת (" + e.message + ")"); }
+  if (!r.ok) {
+    let m = ""; try { const j = await r.json(); m = j.error?.message || JSON.stringify(j).slice(0, 400); } catch (e) { m = r.statusText; }
+    if (r.status === 401) m = "המפתח נדחה (401). בדוק שהוא תקין ופעיל. " + m;
+    if (r.status === 402) m = "אין מספיק קרדיט בחשבון OpenRouter. " + m;
+    throw new Error(`OpenRouter ${r.status}: ${m}`);
+  }
+  return r;
+}
+
+// ================================================================ helpers
+async function api(url, opts) {
+  const r = await fetch(url, opts);
+  if (!r.ok) { let m = r.statusText; try { const j = await r.json(); m = j.detail || m; } catch (e) {} throw new Error(typeof m === "string" ? m : JSON.stringify(m)); }
+  return r.json();
+}
+const fileUrl = (job, name) => `/api/jobs/${job}/files/${name}`;
+const fetchBlob = async url => { const r = await fetch(url); if (!r.ok) throw new Error("הורדת קובץ מהשרת נכשלה"); return r.blob(); };
+const toDataUri = blob => new Promise((res, rej) => { const f = new FileReader(); f.onload = () => res(f.result); f.onerror = rej; f.readAsDataURL(blob); });
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function savePics() { try { localStorage.setItem(PICS_KEY, JSON.stringify(S.pics.filter(v => v.status === "done").slice(-30))); } catch (e) {} }
+function loadPics() { try { return JSON.parse(localStorage.getItem(PICS_KEY)) || []; } catch (e) { return []; } }
+
+// ================================================================ reference images
+function renderRefs() {
+  $("refs").innerHTML = S.refs.map((r, i) => `<div class="ref"><img src="${r.url}" alt=""><span class="num">${i + 1}</span>
+      <button class="rm" type="button" data-rm="${i}" aria-label="הסר">✕</button></div>`).join("")
+    + (S.refs.length < HARD_MAX_REFS ? `<div class="pick" id="p-add"><div class="pc"><b>+ הוסף תמונות</b><span>אפשר כמה ביחד</span></div><button class="ghost small paste" type="button">הדבק מהלוח</button></div>` : "");
+  $("refcount").textContent = S.refs.length ? `${S.refs.length} תמונות רפרנס. אפשר להפנות אליהן בתיאור: image 1, image 2... מודלים שלא מקבלים כמות כזו מסומנים כלא זמינים.` : "בלי רפרנסים התמונה נוצרת מהתיאור בלבד.";
+  renderModels();
+}
+function addRefs(files) {
+  $("pasteerr").textContent = "";
+  const imgs = [...files].filter(f => f.type.startsWith("image/") || /\.(heic|heif)$/i.test(f.name));
+  const room = HARD_MAX_REFS - S.refs.length;
+  for (const f of imgs.slice(0, room)) S.refs.push({ file: f, url: URL.createObjectURL(f) });
+  if (imgs.length > room) $("pasteerr").textContent = `נוספו רק ${room} תמונות: המקסימום הוא ${HARD_MAX_REFS}`;
+  renderRefs();
+}
+const EXT = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/heic": "heic", "image/gif": "png" };
+async function pasteImages() {
+  $("pasteerr").textContent = "";
+  try {
+    if (!navigator.clipboard?.read) throw new Error("הדפדפן הזה לא תומך בהדבקת תמונות מהלוח. אפשר לבחור קבצים");
+    const found = [];
+    for (const it of await navigator.clipboard.read()) {
+      const type = it.types.find(t => t.startsWith("image/"));
+      if (type) found.push(new File([await it.getType(type)], `pasted-${Date.now()}-${found.length}.${EXT[type] || "png"}`, { type }));
+    }
+    if (!found.length) throw new Error("בלוח אין תמונה. העתק תמונה (לחיצה ארוכה ← העתק) ונסה שוב");
+    addRefs(found);
+  } catch (e) { $("pasteerr").textContent = e.name === "NotAllowedError" ? "הגישה ללוח נחסמה. אשר את ההדבקה כשהדפדפן שואל ונסה שוב" : e.message; }
+}
+$("refs").onclick = e => {
+  const rm = e.target.closest("[data-rm]");
+  if (rm) { const [r] = S.refs.splice(+rm.dataset.rm, 1); URL.revokeObjectURL(r.url); renderRefs(); return; }
+  if (e.target.closest(".paste")) { pasteImages(); return; }
+  if (e.target.closest("#p-add")) $("f-refs").click();
+};
+$("refs").ondragover = e => { e.preventDefault(); $("p-add")?.classList.add("over"); };
+$("refs").ondragleave = () => $("p-add")?.classList.remove("over");
+$("refs").ondrop = e => { e.preventDefault(); addRefs(e.dataTransfer.files); };
+$("f-refs").onchange = e => { addRefs(e.target.files); e.target.value = ""; };
+document.addEventListener("paste", e => {  // Ctrl/Cmd+V on desktop
+  if (e.target.closest("input, textarea")) return;
+  const fs = [...(e.clipboardData?.files || [])].filter(x => x.type.startsWith("image/"));
+  if (fs.length) { addRefs(fs); e.preventDefault(); }
+});
+
+// ================================================================ models (live list from OpenRouter, with each model's own settings)
+const curModel = () => S.models.find(m => m.id === $("model").value);
+const refRange = m => { const r = m.supported_parameters?.input_references; return r ? [r.min || 0, r.max || 0] : [0, 0]; };
+const fits = m => { const [lo, hi] = refRange(m), n = S.refs.length; return n >= lo && n <= hi; };
+
+function renderModels() {
+  if (!S.models.length) return;
+  const prev = $("model").value;
+  $("model").innerHTML = S.models.map(m => {
+    const [lo, hi] = refRange(m);
+    const tag = hi === 0 ? "טקסט בלבד" : lo > 0 ? `חייב רפרנס, עד ${hi}` : `עד ${hi} רפרנסים`;
+    return `<option value="${esc(m.id)}" ${fits(m) ? "" : "disabled"}>${esc(m.name || m.id)}  · ${tag}</option>`;
+  }).join("");
+  const ok = id => S.models.some(m => m.id === id && fits(m));
+  $("model").value = ok(prev) ? prev : ["google/gemini-3-pro-image", "openai/gpt-image-2", "bytedance-seed/seedream-5-0-pro"].find(ok) || (S.models.find(fits) || {}).id;
+  renderParams();
+}
+
+const P_LABEL = { aspect_ratio: "יחס תמונה", resolution: "רזולוציה", quality: "איכות", output_format: "פורמט קובץ", background: "רקע" };
+const V_LABEL = { auto: "אוטומטי", transparent: "שקוף", opaque: "אטום", low: "נמוכה", medium: "בינונית", high: "גבוהה", xhigh: "גבוהה מאוד", max: "מקסימלית" };
+function renderParams() {
+  const m = curModel(); if (!m) { $("params").innerHTML = ""; return; }
+  const sp = m.supported_parameters || {}, keep = {};
+  for (const el of $("params").querySelectorAll("[data-p]")) keep[el.dataset.p] = el.value;
+  const rows = [];
+  for (const k of ["aspect_ratio", "resolution", "quality", "output_format", "background"]) {
+    // svg and gif outputs need their own handling (vector files, frame counts), so they are not offered here
+    const vals = (sp[k]?.values || []).filter(v => !(k === "output_format" && /svg|gif/.test(v)));
+    if (!vals.length) continue;
+    rows.push(`<div><label>${P_LABEL[k]}</label><select data-p="${k}"><option value="">ברירת מחדל</option>${vals.map(v => `<option value="${esc(v)}">${esc(k === "aspect_ratio" || k === "resolution" || k === "output_format" ? v : (V_LABEL[v] || v))}</option>`).join("")}</select></div>`);
+  }
+  if (sp.n && sp.n.max > 1) rows.push(`<div><label>כמה תמונות (עד ${sp.n.max})</label><input type="number" data-p="n" min="1" max="${sp.n.max}" step="1" value="1"></div>`);
+  if (sp.seed) rows.push(`<div><label>Seed (ריק = אקראי)</label><input type="number" data-p="seed" min="0" step="1" placeholder="אקראי"></div>`);
+  $("params").innerHTML = rows.join("");
+  for (const el of $("params").querySelectorAll("[data-p]")) {  // keep what was chosen when switching models, where it still applies
+    const v = keep[el.dataset.p];
+    if (v != null && v !== "" && (el.tagName !== "SELECT" || [...el.options].some(o => o.value === v))) el.value = v;
+  }
+  $("model-info").textContent = (m.description || "").slice(0, 220);
+}
+$("model").onchange = renderParams;
+
+// ================================================================ generate
+async function mediaUrl(job, name) {
+  if (S.cfg.public_url_set) {
+    const r = await api(`/api/jobs/${job}/sign?name=${encodeURIComponent(name)}`);
+    if (r.url) return r.url;
+  }
+  return toDataUri(await fetchBlob(fileUrl(job, name)));
+}
+
+async function ensureUploaded() {
+  const sig = S.refs.map(r => `${r.file.name}:${r.file.size}:${r.file.lastModified}`).join("|");
+  if (S.job && S.uploadedSig === sig) return S.job;
+  const fd = new FormData();
+  for (const r of S.refs) fd.append("images", r.file);
+  S.job = await api("/api/pictures", { method: "POST", body: fd }); S.uploadedSig = sig;
+  return S.job;
+}
+
+function b64Blob(b64, type) {
+  const bin = atob(b64), buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  return new Blob([buf], { type: type || "image/png" });
+}
+
+$("go").onclick = async () => {
+  $("err").textContent = "";
+  const m = curModel(), prompt = $("prompt").value.trim();
+  if (!getKey()) { $("err").textContent = "הזן מפתח OpenRouter בראש הדף"; return; }
+  if (!m) { $("err").textContent = "אין מודל שמתאים לכמות תמונות הרפרנס. הסר תמונות או בחר מודל אחר"; return; }
+  if (!fits(m)) { const [lo, hi] = refRange(m); $("err").textContent = lo > S.refs.length ? "המודל הזה דורש לפחות תמונת רפרנס אחת" : `המודל הזה מקבל עד ${hi} תמונות רפרנס`; return; }
+  if (!prompt) { $("err").textContent = "כתוב תיאור לתמונה"; return; }
+
+  const body = { model: m.id, prompt, response_format: "url" }, settings = [];
+  for (const el of $("params").querySelectorAll("[data-p]")) {
+    const k = el.dataset.p, v = el.value.trim();
+    if (v === "" || (k === "n" && +v <= 1)) continue;
+    body[k] = k === "n" || k === "seed" ? +v : v;
+    settings.push(k === "n" ? `${v} תמונות` : k === "seed" ? `seed ${v}` : (V_LABEL[v] && k !== "aspect_ratio" ? `${P_LABEL[k]}: ${V_LABEL[v]}` : v));
+  }
+  if (S.refs.length) settings.push(`${S.refs.length} רפרנסים`);
+  const item = { id: Math.random().toString(36).slice(2, 8), status: "working", model: m.id, prompt, settings: settings.join(" · "), note: S.refs.length ? "מעלה תמונות רפרנס" : "נשלח", images: [] };
+  S.pics.push(item); renderPics(); $("go").disabled = true;
+  try {
+    const job = await ensureUploaded();
+    if (job.frames.length) body.input_references = await Promise.all(job.frames.map(async f => ({ type: "image_url", image_url: { url: await mediaUrl(job.id, f.name) } })));
+    item.note = "נשלח, ממתין לתמונה"; renderPics();
+    const res = await (await orFetch("/images", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json();
+    const data = res.data || [];
+    if (!data.length) throw new Error("OpenRouter לא החזיר תמונה" + (res.error?.message ? ": " + res.error.message : ""));
+    if (res.usage?.cost != null) item.cost = res.usage.cost;
+    item.note = "שומר בשרת"; renderPics();
+    // keep a copy on our server: OpenRouter's links expire after a day
+    for (const [i, d] of data.entries()) {
+      const pf = new FormData();
+      if (d.url) pf.append("url", d.url);
+      else if (d.b64_json) pf.append("file", b64Blob(d.b64_json, d.media_type), "image");
+      else continue;
+      try {
+        const pic = await api(`/api/jobs/${job.id}/picture`, { method: "POST", body: pf });
+        item.images.push({ href: fileUrl(job.id, pic.name), name: pic.name });
+        await window.Shell?.record(job.id, { name: pic.name, kind: "image", title: prompt.slice(0, 80), model: m.id,
+          label: item.settings + (data.length > 1 ? `${item.settings ? " · " : ""}${i + 1}/${data.length}` : ""), prompt,
+          cost: item.cost != null ? item.cost / data.length : null, inputs: job.frames.map(f => f.name) });
+      } catch (e) {
+        // saving failed: still show the picture straight from OpenRouter (the link works for a day)
+        if (d.url) item.images.push({ href: d.url, name: "", temp: true }); else item.saveErr = e.message;
+      }
+      renderPics();
+    }
+    if (!item.images.length) throw new Error("התמונה נוצרה אבל השמירה בשרת נכשלה" + (item.saveErr ? ": " + item.saveErr : ""));
+    item.status = "done"; savePics();
+  } catch (e) { item.status = "error"; item.error = e.message; }
+  $("go").disabled = false; renderPics();
+};
+
+function renderPics() {
+  $("s-results").classList.toggle("hidden", !S.pics.length);
+  $("pics").innerHTML = S.pics.slice().reverse().map(v => `<div class="item">
+    <span class="tag">${esc(v.model)}</span> ${v.settings ? `<span class="tag">${esc(v.settings)}</span>` : ""}
+    <div class="prompt-sm">${esc(v.prompt.slice(0, 140))}${v.prompt.length > 140 ? "…" : ""}</div>
+    ${v.status === "working" ? `<div class="status">יוצר תמונה (בדרך כלל עד דקה, השאר את הדף פתוח)... ${esc(v.note || "")}</div>` : ""}
+    ${v.status === "error" ? `<div class="error">${esc(v.error)}</div>` : ""}
+    ${v.images.length ? `<div class="gal">${v.images.map((im, i) => `<figure><a href="${esc(im.href)}" target="_blank" rel="noopener"><img src="${esc(im.href)}" alt="" loading="lazy"></a>
+        <figcaption><a href="${esc(im.href)}" download="image${im.name ? im.name.slice(im.name.lastIndexOf(".")) : ".png"}">הורד</a>
+        ${im.temp ? "<span>לא נשמר בשרת, הורד עכשיו</span>" : `<button class="ghost small" type="button" data-ref="${esc(v.id)}:${i}">הוסף כרפרנס</button>`}</figcaption></figure>`).join("")}</div>` : ""}
+    ${v.status === "done" && v.cost != null ? `<div class="status">עלות $${(+v.cost).toFixed(3)}</div>` : ""}
+  </div>`).join("");
+}
+// a generated picture can go straight back in as a reference, to refine it step by step
+$("pics").onclick = async e => {
+  const b = e.target.closest("[data-ref]"); if (!b) return;
+  const [id, i] = b.dataset.ref.split(":"), im = S.pics.find(v => v.id === id)?.images[+i]; if (!im) return;
+  b.disabled = true;
+  try {
+    const blob = await fetchBlob(im.href);
+    addRefs([new File([blob], im.name || "generated.png", { type: blob.type || "image/png", lastModified: Date.now() })]);
+    $("refs").scrollIntoView({ behavior: "smooth", block: "center" });
+  } catch (x) { $("err").textContent = "לא הצלחתי לטעון את התמונה כרפרנס: " + x.message; }
+  b.disabled = false;
+};
+
+// ================================================================ init
+(async function init() {
+  renderKey();
+  S.pics = loadPics(); renderPics(); renderRefs();
+  S.cfg = await api("/api/config");
+  $("nopub").classList.toggle("hidden", S.cfg.public_url_set);
+  try {
+    const r = await fetch(OR + "/images/models");
+    if (!r.ok) throw new Error(r.status);
+    S.models = ((await r.json()).data || [])
+      // vector-only models return SVG files, which this page does not handle
+      .filter(m => { const f = m.supported_parameters?.output_format?.values; return !(f && f.every(v => v === "svg")); })
+      .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
+    if (!S.models.length) throw new Error("empty");
+    renderModels();
+  } catch (e) {
+    $("model").innerHTML = "<option>לא הצלחתי לטעון את רשימת המודלים</option>";
+    $("err").textContent = "טעינת רשימת המודלים מ-OpenRouter נכשלה. רענן את הדף.";
+  }
+})();
+</script>
+<script src="/static/shell.js"></script>
+</body>
+</html>

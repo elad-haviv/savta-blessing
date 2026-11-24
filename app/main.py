@@ -91,7 +91,7 @@ def _cookie_ok(v: str | None) -> bool:
         return False
 
 
-PAGES = ("/", "/talk", "/frames", "/reference")
+PAGES = ("/", "/talk", "/frames", "/reference", "/text", "/image")
 
 
 def _login_page(err: str = "", status: int = 401, next_path: str = "/") -> HTMLResponse:
@@ -555,6 +555,84 @@ def create_frames(start: UploadFile = File(...), end: UploadFile | None = File(N
 
 
 MAX_REFS = 9
+MAX_IMAGE_REFS = 16
+
+
+def _new_job() -> tuple[str, Path]:
+    job_id = uuid.uuid4().hex
+    d = DATA_DIR / "jobs" / job_id
+    d.mkdir(parents=True)
+    return job_id, d
+
+
+def _store_refs(d: Path, images: list[UploadFile], max_side: int = 1920) -> list[dict]:
+    frames = []
+    for i, f in enumerate(images, 1):
+        ext = _ext(f, IMAGE_EXT, "תמונת רפרנס")
+        uid = uuid.uuid4().hex[:6]
+        raw = _save(f, d / f"upload_{uid}{ext}", 25, f"תמונה {i}")
+        name = f"frame_u{uid}.jpg"
+        try:
+            pl.normalize_image(raw, d / name, max_side)
+        except pl.PipelineError:
+            raise HTTPException(400, f"לא הצלחתי לקרוא את תמונה {i} ({f.filename})")
+        finally:
+            raw.unlink(missing_ok=True)
+        frames.append({"name": name, "role": "ref", "t": None, "score": 0, "uploaded": True})
+    return frames
+
+
+@app.post("/api/text", dependencies=[Depends(require_auth)])
+def create_text():
+    """An empty job that holds the videos made from a text description alone."""
+    job_id, d = _new_job()
+    state = {"id": job_id, "created": int(time.time()), "kind": "text", "status": "ready", "frames": []}
+    (d / "state.json").write_text(json.dumps(state, ensure_ascii=False), "utf-8")
+    return state
+
+
+@app.post("/api/pictures", dependencies=[Depends(require_auth)])
+def create_pictures(images: list[UploadFile] = File(default=[])):
+    """A job for text-to-image generation, with optional reference images."""
+    images = [f for f in images if f.filename]
+    if len(images) > MAX_IMAGE_REFS:
+        raise HTTPException(400, f"אפשר עד {MAX_IMAGE_REFS} תמונות רפרנס")
+    job_id, d = _new_job()
+    try:
+        frames = _store_refs(d, images, 2048)
+    except BaseException:
+        shutil.rmtree(d, ignore_errors=True)
+        raise
+    state = {"id": job_id, "created": int(time.time()), "kind": "image", "status": "ready", "frames": frames}
+    (d / "state.json").write_text(json.dumps(state, ensure_ascii=False), "utf-8")
+    return state
+
+
+@app.post("/api/jobs/{job_id}/picture", dependencies=[Depends(require_auth)])
+async def add_picture(job_id: str, url: str = Form(""), file: UploadFile | None = File(None)):
+    """Keep a generated picture on the server (OpenRouter's links expire after a day)."""
+    d = jobdir(job_id)
+    uid = uuid.uuid4().hex[:8]
+    tmp = d / f"upload_pic_{uid}"
+    try:
+        if file is not None:
+            size = 0
+            with tmp.open("wb") as fh:
+                while chunk := await file.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > 60 * 1024 * 1024:
+                        raise pl.PipelineError("התמונה גדולה מדי")
+                    fh.write(chunk)
+        elif url:
+            pl.fetch_public_url(url, tmp, 60 * 1024 * 1024)
+        else:
+            raise pl.PipelineError("לא התקבלה תמונה")
+        name = f"pic_{uid}{pl.image_ext(tmp)}"
+        tmp.rename(d / name)
+    except pl.PipelineError as e:
+        tmp.unlink(missing_ok=True)
+        raise HTTPException(400, str(e))
+    return {"name": name}
 
 
 @app.post("/api/refs", dependencies=[Depends(require_auth)])
@@ -598,7 +676,7 @@ def replace_subs(job_id: str, subs: UploadFile = File(...)):
 
 class RecordReq(BaseModel):
     name: str
-    kind: str = Field(pattern="^(blessing|talk|frames|refs)$")
+    kind: str = Field(pattern="^(blessing|talk|frames|refs|text|image)$")
     title: str = Field("", max_length=300)
     model: str = Field("", max_length=120)
     label: str = Field("", max_length=200)
@@ -609,15 +687,17 @@ class RecordReq(BaseModel):
 
 @app.post("/api/jobs/{job_id}/record", dependencies=[Depends(require_auth)])
 def record_output(job_id: str, req: RecordReq):
-    """Add a finished video to the history, with the input files it was made from."""
+    """Add a finished video or picture to the history, with the input files it was made from."""
     d = jobdir(job_id)
-    if not SAFE_NAME.match(req.name) or not req.name.startswith(("final_", "part_")) or not (d / req.name).is_file():
-        raise HTTPException(404, "הסרטון לא נמצא בשרת")
+    is_pic = req.name.startswith("pic_")
+    if not SAFE_NAME.match(req.name) or not req.name.startswith(("final_", "part_", "pic_")) or not (d / req.name).is_file() \
+            or is_pic != (req.kind == "image"):
+        raise HTTPException(404, "הקובץ לא נמצא בשרת")
     inputs = [n for n in dict.fromkeys(req.inputs)
               if SAFE_NAME.match(n) and not n.startswith((".", "source")) and n not in HIDDEN and (d / n).is_file()]
     thumb = f"thumb_{Path(req.name).stem}.jpg"
     try:
-        pl.make_thumb(d / req.name, d / thumb)
+        (pl.image_thumb if is_pic else pl.make_thumb)(d / req.name, d / thumb)
     except pl.PipelineError:
         thumb = None
     entry = {**req.model_dump(exclude={"inputs"}), "inputs": inputs, "thumb": thumb, "created": int(time.time())}
@@ -628,7 +708,7 @@ def record_output(job_id: str, req: RecordReq):
     return {**entry, "job": job_id}
 
 
-KIND_OF_JOB = {"talk": "talk", "frames": "frames", "refs": "refs"}  # anything else came from the main page
+KIND_OF_JOB = {"talk": "talk", "frames": "frames", "refs": "refs", "text": "text", "image": "image"}  # anything else came from the main page
 
 
 def _untracked(d: Path, st: dict) -> list[dict]:
@@ -637,7 +717,9 @@ def _untracked(d: Path, st: dict) -> list[dict]:
     known = {o["name"] for o in st.get("outputs", [])} | {g.get("part") for g in st.get("gens", {}).values()}
     kind = KIND_OF_JOB.get(st.get("kind"), "blessing")
     orphan = False
-    if kind in ("frames", "refs"):  # one clip per generation: the part is the finished video
+    if kind == "image":  # pictures are always recorded when they are saved; nothing to recover
+        return []
+    if kind in ("frames", "refs", "text"):  # one clip per generation: the part is the finished video
         vids = sorted(d.glob("part_*.mp4"))
     else:
         vids = sorted(d.glob("final_*.mp4"))
@@ -713,7 +795,7 @@ def trim_video(job_id: str, req: TrimReq):
 class GenReq(BaseModel):
     gen_id: str = Field(min_length=1, max_length=200)
     polling_url: str = Field("", max_length=500)
-    page: str = Field(pattern="^(blessing|talk|frames|refs)$")
+    page: str = Field(pattern="^(blessing|talk|frames|refs|text)$")
     model: str = Field("", max_length=120)
     label: str = Field("", max_length=200)
     prompt: str = Field("", max_length=3000)
@@ -784,7 +866,7 @@ def inventory():
             thumb = d / f"thumb_{v.stem}.jpg"
             if not thumb.is_file():
                 try:
-                    pl.make_thumb(v, thumb)
+                    (pl.image_thumb if v.name.startswith("pic_") else pl.make_thumb)(v, thumb)
                 except Exception:  # noqa: BLE001 - a missing thumbnail is fine
                     pass
             n += 1
@@ -797,7 +879,7 @@ def inventory():
 @app.delete("/api/jobs/{job_id}/outputs/{name}", dependencies=[Depends(require_auth)])
 def delete_output(job_id: str, name: str):
     d = jobdir(job_id)
-    if not SAFE_NAME.match(name) or not name.startswith(("final_", "part_")):
+    if not SAFE_NAME.match(name) or not name.startswith(("final_", "part_", "pic_")):
         raise HTTPException(404)
     (d / name).unlink(missing_ok=True)
     (d / f"thumb_{Path(name).stem}.jpg").unlink(missing_ok=True)
@@ -910,6 +992,16 @@ def frames_page():
 @app.get("/reference", dependencies=[Depends(require_auth)])
 def reference_page():
     return _page("reference.html")
+
+
+@app.get("/text", dependencies=[Depends(require_auth)])
+def text_page():
+    return _page("text.html")
+
+
+@app.get("/image", dependencies=[Depends(require_auth)])
+def image_page():
+    return _page("image.html")
 
 
 app.mount("/static", StaticFiles(directory=static_dir), name="static")

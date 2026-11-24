@@ -84,6 +84,26 @@ def normalize_image(src: Path, out: Path, max_side: int = 1920) -> Path:
     return out
 
 
+IMAGE_CODECS = {"png": ".png", "mjpeg": ".jpg", "webp": ".webp", "gif": ".gif"}
+
+
+def image_ext(path: Path) -> str:
+    """File extension of a generated picture, judged by its content (never by what the sender claims)."""
+    out = run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name,width,height",
+               "-of", "csv=p=0", str(path)]).strip().split(",")
+    if len(out) < 3 or out[0] not in IMAGE_CODECS or not out[1].isdigit() or not out[2].isdigit():
+        raise PipelineError("הקובץ שהתקבל אינו תמונה תקינה")
+    return IMAGE_CODECS[out[0]]
+
+
+def image_thumb(src: Path, out: Path) -> Path:
+    """Small preview of a picture for the history list."""
+    run(["ffmpeg", "-y", "-i", str(src), "-frames:v", "1", "-vf", "scale=320:-2", "-q:v", "4", str(out)])
+    if not out.exists():
+        raise PipelineError("לא נוצרה תמונה מוקטנת")
+    return out
+
+
 # ---------------------------------------------------------------- long videos: split, chain, stitch
 
 def split_audio(src: Path, outdir: Path, max_len: float, prefix: str, min_len: float = 4.0) -> list[dict]:

@@ -5,8 +5,10 @@
     { href: "/talk", label: "תמונה מדברת", sub: "תמונה + אודיו + כתוביות" },
     { href: "/frames", label: "סרטון מתמונות", sub: "תמונת התחלה וסיום + תיאור" },
     { href: "/reference", label: "סרטון מרפרנסים", sub: "תמונות רפרנס + תיאור" },
+    { href: "/text", label: "סרטון מטקסט", sub: "תיאור בלבד" },
+    { href: "/image", label: "תמונה מטקסט", sub: "תיאור, אפשר גם תמונות רפרנס" },
   ];
-  const KIND = { blessing: "ברכה", talk: "תמונה מדברת", frames: "מתמונות", refs: "מרפרנסים" };
+  const KIND = { blessing: "ברכה", talk: "תמונה מדברת", frames: "מתמונות", refs: "מרפרנסים", text: "מטקסט", image: "תמונה" };
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const url = (job, name) => `/api/jobs/${job}/files/${encodeURIComponent(name)}`;
   const when = t => new Date(t * 1000).toLocaleString("he-IL", { dateStyle: "short", timeStyle: "short" });
@@ -101,7 +103,7 @@
     } catch (e) { list.innerHTML = `<div class="sh-empty">טעינת ההיסטוריה נכשלה</div>`; }
   }
   function render() {
-    if (!items.length) { list.innerHTML = `<div class="sh-empty">עוד אין הפקות. כל סרטון שתפיק יופיע כאן, בכל המכשירים.</div>`; return; }
+    if (!items.length) { list.innerHTML = `<div class="sh-empty">עוד אין הפקות. כל סרטון או תמונה שתפיק יופיעו כאן, בכל המכשירים.</div>`; return; }
     list.innerHTML = items.map((o, i) => `<div class="sh-it" data-i="${i}">
       ${o.thumb ? `<img src="${url(o.job, o.thumb)}" alt="" loading="lazy">` : `<div class="sh-ph"></div>`}
       <div><div class="t">${esc(o.title || o.prompt || "סרטון")}</div>
@@ -118,7 +120,30 @@
     if (/^subs\./.test(n)) return `<a href="${u}" target="_blank" rel="noopener">קובץ הכתוביות</a>`;
     return `<a href="${u}" target="_blank" rel="noopener">${esc(n)}</a>`;
   }
+  function viewPicture(o) {
+    const v = document.createElement("div"), u = url(o.job, o.name), ext = (o.name.match(/\.(\w+)$/) || [])[1] || "png";
+    v.className = "sh-vw";
+    v.innerHTML = `<div class="sh-card">
+      <h3><span>${esc(o.title || "תמונה")}</span><button class="sh-x" aria-label="סגור">✕</button></h3>
+      <a href="${u}" target="_blank" rel="noopener"><img src="${u}" alt="" style="width:100%;border-radius:10px;display:block"></a>
+      <div class="sh-meta"><span class="sh-tag">${esc(KIND[o.kind] || o.kind)}</span> ${esc(when(o.created))} · ${esc(o.model || "")}${o.label ? " · " + esc(o.label) : ""}${o.cost != null ? ` · עלות $${(+o.cost).toFixed(3)}` : ""}</div>
+      ${o.prompt ? `<div class="sh-prompt">${esc(o.prompt)}</div>` : ""}
+      ${(o.inputs || []).length ? `<div class="sh-meta">תמונות הרפרנס:</div><div class="sh-ins">${o.inputs.map(n => inputHtml(o, n)).join("")}</div>` : ""}
+      <div class="sh-acts"><a href="${u}" download="image-${o.created}.${esc(ext)}">הורד תמונה</a>
+        <button type="button" data-del>מחק מההיסטוריה</button></div>
+    </div>`;
+    v.onclick = async e => {
+      if (e.target === v || e.target.closest(".sh-x")) { v.remove(); return; }
+      if (e.target.closest("[data-del]")) {
+        if (!confirm("למחוק את התמונה הזו מהשרת?")) return;
+        try { await fetch(`/api/jobs/${o.job}/outputs/${encodeURIComponent(o.name)}`, { method: "DELETE" }); } catch (x) {}
+        v.remove(); load();
+      }
+    };
+    document.body.appendChild(v);
+  }
   function view(o) {
+    if (o.kind === "image") return viewPicture(o);
     const v = document.createElement("div");
     v.className = "sh-vw";
     v.innerHTML = `<div class="sh-card">
@@ -246,7 +271,7 @@
   }
   const getKey = () => { try { return localStorage.getItem("savta_or_key") || sessionStorage.getItem("savta_or_key") || ""; } catch (e) { return ""; } };
   const sleep = ms => new Promise(r => setTimeout(r, ms));
-  const label = { blessing: "ברכה", talk: "תמונה מדברת", frames: "סרטון מתמונות", refs: "סרטון מרפרנסים" };
+  const label = { blessing: "ברכה", talk: "תמונה מדברת", frames: "סרטון מתמונות", refs: "סרטון מרפרנסים", text: "סרטון מטקסט" };
 
   async function collect(g, onStatus) {
     const key = getKey(), id = g.gen_id.slice(-8), what = `${label[g.page]} (${when(g.created)})`;
