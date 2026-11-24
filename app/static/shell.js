@@ -7,8 +7,9 @@
     { href: "/reference", label: "סרטון מרפרנסים", sub: "תמונות רפרנס + תיאור" },
     { href: "/text", label: "סרטון מטקסט", sub: "תיאור בלבד" },
     { href: "/image", label: "תמונה מטקסט", sub: "תיאור, אפשר גם תמונות רפרנס" },
+    { href: "/transition", label: "מעבר בין סרטונים", sub: "שני סרטונים + סוג מעבר, בלי עלות" },
   ];
-  const KIND = { blessing: "ברכה", talk: "תמונה מדברת", frames: "מתמונות", refs: "מרפרנסים", text: "מטקסט", image: "תמונה" };
+  const KIND = { blessing: "ברכה", talk: "תמונה מדברת", frames: "מתמונות", refs: "מרפרנסים", text: "מטקסט", image: "תמונה", trans: "מעבר" };
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const url = (job, name) => `/api/jobs/${job}/files/${encodeURIComponent(name)}`;
   const when = t => new Date(t * 1000).toLocaleString("he-IL", { dateStyle: "short", timeStyle: "short" });
@@ -116,6 +117,7 @@
   function inputHtml(o, n) {
     const u = url(o.job, n);
     if (/\.(jpe?g|png|webp)$/i.test(n)) return `<a href="${u}" target="_blank" rel="noopener"><img src="${u}" alt=""></a>`;
+    if (/\.(mp4|mov|webm|m4v)$/i.test(n)) return `<video controls preload="metadata" src="${u}" style="width:200px;margin:0"></video>`;
     if (/\.(mp3|wav|m4a|ogg)$/i.test(n)) return `<audio controls preload="none" src="${u}"></audio>`;
     if (/^subs\./.test(n)) return `<a href="${u}" target="_blank" rel="noopener">קובץ הכתוביות</a>`;
     return `<a href="${u}" target="_blank" rel="noopener">${esc(n)}</a>`;

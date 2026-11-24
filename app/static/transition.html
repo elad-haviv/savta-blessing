@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>מעבר בין סרטונים</title>
+<style>
+  :root { --bg:#faf6f0; --card:#fff; --ink:#2b2420; --muted:#8a7f76; --accent:#b4572d; --line:#e8dfd3; --ok:#2e7d4f; --err:#b3261e; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family: "Segoe UI", Arial, sans-serif; line-height:1.55; }
+  main { max-width: 860px; margin: 0 auto; padding: 24px 16px 80px; }
+  h1 { font-size: 26px; margin: 8px 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .sub a { color: var(--accent); }
+  section { background: var(--card); border:1px solid var(--line); border-radius: 14px; padding: 18px 20px; margin-bottom: 18px; }
+  section h2 { font-size: 17px; margin: 0 0 12px; }
+  .hidden { display:none !important; }
+  button { background: var(--accent); color:#fff; border:0; border-radius:10px; padding: 10px 18px; font-size:15px; cursor:pointer; font-family:inherit; }
+  button:disabled { opacity:.5; cursor:default; }
+  button.ghost { background:transparent; color:var(--accent); border:1px solid var(--accent); }
+  button.small { padding:5px 12px; font-size:13px; }
+  input[type=text], input[type=password], select, textarea { width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:9px; font: inherit; background:#fff; color:inherit; }
+  input[type=password] { direction:ltr; text-align:left; }
+  textarea { min-height: 110px; resize: vertical; }
+  label { display:block; font-size:14px; color:var(--muted); margin: 12px 0 4px; }
+  label.inline { display:flex; gap:8px; align-items:center; margin-top:10px; color:var(--ink); }
+  label.inline input { width:auto; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; }
+  .row > * { flex:1; min-width: 140px; }
+  .row > button { flex:0 0 auto; }
+  .picks { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+  @media (max-width: 520px) { .picks { grid-template-columns: 1fr; } }
+  .pick { border:2px dashed var(--line); border-radius:12px; padding:14px; text-align:center; color:var(--muted); cursor:pointer; min-height:150px; display:flex; flex-direction:column; justify-content:center; align-items:center; gap:6px; }
+  .pick.over { border-color: var(--accent); color: var(--accent); }
+  .pick.set { border-style:solid; border-color: var(--accent); color: var(--ink); }
+  .pick b { color: var(--ink); }
+  .pick .pc { display:flex; flex-direction:column; align-items:center; gap:6px; }
+  .pick .paste { margin-top:6px; }
+  .pick img { max-width:100%; max-height:200px; border-radius:8px; object-fit:contain; }
+  .status { margin-top:10px; color:var(--muted); }
+  .error { color:var(--err); margin-top:8px; white-space: pre-wrap; }
+  .item { border-top:1px solid var(--line); padding:12px 0; }
+  .item:first-of-type { border-top:0; }
+  video { width:100%; margin-top:8px; border-radius:10px; }
+  .tag { unicode-bidi:isolate; font-size:12px; background:#f4ece1; border-radius:6px; padding:2px 8px; color:var(--muted); }
+  .warn { background:#fff4e0; border:1px solid #f0d9a8; border-radius:10px; padding:10px 12px; font-size:14px; margin-top:10px; }
+  .okbox { background:#eaf6ee; border:1px solid #b9dcc5; border-radius:10px; padding:10px 12px; font-size:14px; }
+  .note { font-size:13px; color:var(--muted); margin-top:8px; }
+  .prompt-sm { font-size:13px; color:var(--muted); margin-top:4px; }
+  .pick video { max-width:100%; max-height:220px; border-radius:8px; margin:0; }
+  input[type=number] { width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:9px; font: inherit; background:#fff; color:inherit; }
+</style>
+</head>
+<body>
+<main>
+  <h1>מעבר בין סרטונים</h1>
+  <p class="sub">מעלים שני סרטונים, בוחרים סוג מעבר, וקובעים כמה זמן הוא לוקח מכל סרטון. העיבוד נעשה בשרת שלך, בלי מפתח ובלי עלות.</p>
+
+  <section>
+    <h2>1. שני הסרטונים</h2>
+    <div class="picks">
+      <div class="pick" id="p-a"><div class="pc"><b>סרטון א׳ (ראשון)</b><span>גרור לכאן או לחץ לבחירה</span></div></div>
+      <div class="pick" id="p-b"><div class="pc"><b>סרטון ב׳ (שני)</b><span>גרור לכאן או לחץ לבחירה</span></div></div>
+    </div>
+    <input type="file" id="f-a" accept="video/*,.mkv,.avi,.mov,.m4v" class="hidden">
+    <input type="file" id="f-b" accept="video/*,.mkv,.avi,.mov,.m4v" class="hidden">
+    <div style="margin-top:10px"><button class="ghost small" id="swap" type="button">החלף סדר</button></div>
+    <p class="note">הגודל וקצב הפריימים של התוצאה נקבעים לפי סרטון א׳. אם לסרטון ב׳ יחס אחר, הוא ימורכז עם שוליים שחורים.</p>
+  </section>
+
+  <section>
+    <h2>2. המעבר</h2>
+    <div class="row">
+      <div><label>סוג מעבר</label><select id="kind">
+        <option value="fade">Fade: מיזוג הדרגתי</option>
+        <option value="black">Fade through black: דרך שחור</option>
+        <option value="white">Fade through white: דרך לבן</option>
+        <option value="morph">Morph: עיוות הדרגתי מתמונה לתמונה</option>
+        <option value="blur">Blur: טשטוש ומיזוג</option>
+        <option value="zoom">Zoom: זום פנימה ומיזוג</option>
+        <option value="wipe">Wipe: ניגוב</option>
+        <option value="slide">Slide: סרטון ב׳ דוחף את א׳</option>
+        <option value="circle">Circle: עיגול נפתח מהמרכז</option>
+      </select></div>
+      <div id="dir-wrap" class="hidden"><label>כיוון</label><select id="direction">
+        <option value="left">שמאלה</option><option value="right">ימינה</option><option value="up">למעלה</option><option value="down">למטה</option>
+      </select></div>
+      <div><label>Easing (קצב ההתקדמות)</label><select id="easing">
+        <option value="inout">Ease in-out: מתחיל ומסתיים לאט</option>
+        <option value="linear">Linear: קצב אחיד</option>
+        <option value="in">Ease in: מתחיל לאט ומאיץ</option>
+        <option value="out">Ease out: מתחיל מהר ומאט</option>
+        <option value="inout_strong">Ease in-out חזק</option>
+      </select></div>
+    </div>
+    <div class="row">
+      <div><label>שניות מסוף סרטון א׳</label><input type="number" id="from-a" min="0" max="10" step="0.1" value="0.5" inputmode="decimal"></div>
+      <div><label>שניות מתחילת סרטון ב׳</label><input type="number" id="from-b" min="0" max="10" step="0.1" value="0.5" inputmode="decimal"></div>
+    </div>
+    <div class="note" id="explain"></div>
+    <div class="row" style="margin-top:14px"><button class="ghost" id="go-prev">תצוגה מקדימה מהירה</button><button id="go">הפק סרטון מלא</button></div>
+    <div class="note">התצוגה המקדימה קטנה ומהירה, ומראה רק שתי שניות מכל צד של המעבר. היא לא נשמרת בהיסטוריה.</div>
+    <div class="status" id="status"></div>
+    <div class="error" id="err"></div>
+  </section>
+
+  <section id="s-results" class="hidden">
+    <h2>3. תוצאות</h2>
+    <div id="videos"></div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+let S = { files: { a: null, b: null }, job: null, uploadedSig: "", videos: [], busy: false };
+
+async function api(url, opts) {
+  const r = await fetch(url, opts);
+  if (!r.ok) { let m = r.statusText; try { const j = await r.json(); m = j.detail || m; } catch (e) {} throw new Error(typeof m === "string" ? m : JSON.stringify(m)); }
+  return r.json();
+}
+const fileUrl = (job, name) => `/api/jobs/${job}/files/${name}`;
+
+// ================================================================ the two videos
+const TITLE = { a: "סרטון א׳ (ראשון)", b: "סרטון ב׳ (שני)" };
+function setVideo(role, file) {
+  S.files[role] = file || null;
+  const box = $("p-" + role);
+  box.classList.toggle("set", !!file);
+  box.querySelector(".pc").innerHTML = file
+    ? `<b>${TITLE[role]}</b><video src="${URL.createObjectURL(file)}" muted playsinline preload="metadata" controls></video><span>${esc(file.name)} · לחץ על המסגרת להחלפה</span>`
+    : `<b>${TITLE[role]}</b><span>גרור לכאן או לחץ לבחירה</span>`;
+}
+for (const role of ["a", "b"]) {
+  const box = $("p-" + role), input = $("f-" + role);
+  box.onclick = e => { if (!e.target.closest("video")) input.click(); };
+  box.ondragover = e => { e.preventDefault(); box.classList.add("over"); };
+  box.ondragleave = () => box.classList.remove("over");
+  box.ondrop = e => { e.preventDefault(); box.classList.remove("over"); if (e.dataTransfer.files[0]) setVideo(role, e.dataTransfer.files[0]); };
+  input.onchange = e => { if (e.target.files[0]) setVideo(role, e.target.files[0]); e.target.value = ""; };
+}
+$("swap").onclick = () => { const { a, b } = S.files; setVideo("a", b); setVideo("b", a); };
+
+// ================================================================ settings
+const KIND_LABEL = { fade: "Fade", black: "Fade through black", white: "Fade through white", morph: "Morph", blur: "Blur", zoom: "Zoom", wipe: "Wipe", slide: "Slide", circle: "Circle" };
+const DIR_LABEL = { left: "שמאלה", right: "ימינה", up: "למעלה", down: "למטה" };
+const EASE_LABEL = { inout: "ease in-out", linear: "linear", in: "ease in", out: "ease out", inout_strong: "ease in-out חזק" };
+function explain() {
+  const k = $("kind").value, a = +$("from-a").value || 0, b = +$("from-b").value || 0;
+  $("dir-wrap").classList.toggle("hidden", !["wipe", "slide"].includes(k));
+  let t;
+  if (k === "black" || k === "white") {
+    t = `סרטון א׳ דועך ל${k === "black" ? "שחור" : "לבן"} במשך ${a} שניות האחרונות שלו, ואז סרטון ב׳ עולה במשך ${b} השניות הראשונות שלו. המעבר נמשך ${(a + b).toFixed(1)} שניות, והסרטון לא מתקצר.`;
+  } else {
+    t = `שני הסרטונים חופפים: המעבר נמשך ${Math.max(a, b).toFixed(1)} שניות, והסרטון המחובר מתקצר ב-${Math.min(a, b).toFixed(1)} שניות.`;
+    if (a > b) t += ` כיוון שלקחת יותר מסרטון א׳, סרטון ב׳ עומד על הפריים הראשון שלו ב-${(a - b).toFixed(1)} השניות הראשונות של המעבר.`;
+    if (b > a) t += ` כיוון שלקחת יותר מסרטון ב׳, סרטון א׳ עומד על הפריים האחרון שלו ב-${(b - a).toFixed(1)} השניות האחרונות של המעבר.`;
+    if (k === "morph") t += " Morph עובד טוב כששני הצדדים דומים (אותה דמות או אותה סצנה). בין תמונות שונות לגמרי הוא נראה כמו מריחה.";
+  }
+  $("explain").textContent = t;
+}
+for (const id of ["kind", "from-a", "from-b"]) $(id).oninput = explain;
+
+// ================================================================ run
+async function ensureUploaded() {
+  const sig = ["a", "b"].map(r => { const f = S.files[r]; return `${f.name}:${f.size}:${f.lastModified}`; }).join("|");
+  if (S.job && S.uploadedSig === sig) return S.job;
+  $("status").textContent = "מעלה את הסרטונים...";
+  const fd = new FormData(); fd.append("a", S.files.a); fd.append("b", S.files.b);
+  S.job = await api("/api/transition", { method: "POST", body: fd }); S.uploadedSig = sig;
+  return S.job;
+}
+
+async function runTransition(preview) {
+  $("err").textContent = "";
+  if (S.busy) return;
+  if (!S.files.a || !S.files.b) { $("err").textContent = "בחר את שני הסרטונים"; return; }
+  const req = { kind: $("kind").value, direction: $("direction").value, easing: $("easing").value,
+                from_a: +$("from-a").value || 0, from_b: +$("from-b").value || 0, preview };
+  if (req.from_a + req.from_b <= 0) { $("err").textContent = "קבע זמן מעבר גדול מאפס לפחות באחד הצדדים"; return; }
+  S.busy = true; $("go").disabled = $("go-prev").disabled = true;
+  S.videos = S.videos.filter(v => !v.preview); renderVideos();  // the server keeps only the latest preview
+  try {
+    const job = await ensureUploaded();
+    const [ca, cb] = job.clips;
+    if (req.from_a > ca.duration || req.from_b > cb.duration) throw new Error(`זמן המעבר ארוך מהסרטון (א׳: ${ca.duration} שנ׳, ב׳: ${cb.duration} שנ׳)`);
+    const run = await api(`/api/jobs/${job.id}/transition`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(req) });
+    let t;
+    for (;;) {
+      await sleep(1500);
+      t = (await api(`/api/jobs/${job.id}`)).trans || {};
+      if (t.id !== run.id) throw new Error("העיבוד הוחלף בעיבוד אחר");
+      if (t.status !== "working") break;
+      $("status").textContent = (preview ? "תצוגה מקדימה: " : "") + (t.step || "מעבד") + "...";
+    }
+    if (t.status !== "done") throw new Error(t.error || "העיבוד נכשל");
+    const label = [KIND_LABEL[req.kind], ["wipe", "slide"].includes(req.kind) ? DIR_LABEL[req.direction] : "", EASE_LABEL[req.easing],
+                   `${t.info.taken_a} שנ׳ מ-א׳ · ${t.info.taken_b} שנ׳ מ-ב׳`].filter(Boolean).join(" · ");
+    S.videos = S.videos.filter(v => !v.preview);  // the server keeps only the latest preview
+    S.videos.push({ href: fileUrl(job.id, t.name), preview, label, info: t.info });
+    if (!preview) await window.Shell?.record(job.id, { name: t.name, kind: "trans", title: `${ca.filename || "א׳"} ← ${cb.filename || "ב׳"}`.slice(0, 120),
+      model: "", label: label.slice(0, 200), prompt: "", cost: 0, inputs: [ca.name, cb.name] });
+    $("status").textContent = "";
+  } catch (e) { $("status").textContent = ""; $("err").textContent = e.message; }
+  S.busy = false; $("go").disabled = $("go-prev").disabled = false; renderVideos();
+}
+$("go").onclick = () => runTransition(false);
+$("go-prev").onclick = () => runTransition(true);
+
+function renderVideos() {
+  $("s-results").classList.toggle("hidden", !S.videos.length);
+  $("videos").innerHTML = S.videos.slice().reverse().map(v => `<div class="item">
+    <span class="tag">${v.preview ? "תצוגה מקדימה" : "סרטון מלא"}</span> <span class="tag">${esc(v.label)}</span>
+    <video controls playsinline src="${esc(v.href)}"></video>
+    <div class="status">המעבר מתחיל בשנייה ${v.info.transition_at} ונמשך ${v.info.transition_len} שנ׳ · אורך כולל ${v.info.duration} שנ׳${v.preview ? "" : ` · <a href="${esc(v.href)}" download="transition.mp4">הורד MP4</a>`}</div>
+  </div>`).join("");
+  const first = $("videos").querySelector("video");
+  if (first && S.videos.length) { const v = S.videos[S.videos.length - 1]; first.addEventListener("loadedmetadata", () => { first.currentTime = Math.max(0, v.info.transition_at - 1); }, { once: true }); }
+}
+
+explain();
+</script>
+<script src="/static/shell.js"></script>
+</body>
+</html>

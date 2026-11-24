@@ -23,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import pipeline as pl
+from . import transitions as tr
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data")).resolve()
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
@@ -91,7 +92,7 @@ def _cookie_ok(v: str | None) -> bool:
         return False
 
 
-PAGES = ("/", "/talk", "/frames", "/reference", "/text", "/image")
+PAGES = ("/", "/talk", "/frames", "/reference", "/text", "/image", "/transition")
 
 
 def _login_page(err: str = "", status: int = 401, next_path: str = "/") -> HTMLResponse:
@@ -665,6 +666,77 @@ def create_refs(images: list[UploadFile] = File(...)):
     return state
 
 
+# ------------------------------------------------------------------ two videos joined with a transition
+
+@app.post("/api/transition", dependencies=[Depends(require_auth)])
+def create_transition(a: UploadFile = File(...), b: UploadFile = File(...)):
+    exts = [_ext(a, ALLOWED_EXT, "סרטון א׳"), _ext(b, ALLOWED_EXT, "סרטון ב׳")]
+    job_id, d = _new_job()
+    clips = []
+    try:
+        for f, ext, tag, what in ((a, exts[0], "a", "סרטון א׳"), (b, exts[1], "b", "סרטון ב׳")):
+            name = f"clip{tag}_{uuid.uuid4().hex[:6]}{ext}"
+            _save(f, d / name, MAX_UPLOAD_MB, what)
+            try:
+                clips.append({"name": name, "filename": f.filename, **tr.video_meta(d / name)})
+            except pl.PipelineError:
+                raise HTTPException(400, f"לא הצלחתי לקרוא את {what}")
+    except BaseException:
+        shutil.rmtree(d, ignore_errors=True)
+        raise
+    state = {"id": job_id, "created": int(time.time()), "kind": "trans", "status": "ready", "frames": [], "clips": clips,
+             "filename": a.filename}
+    (d / "state.json").write_text(json.dumps(state, ensure_ascii=False), "utf-8")
+    return state
+
+
+class TransReq(BaseModel):
+    kind: str = Field(pattern="^(" + "|".join(tr.TYPES) + ")$")
+    direction: str = Field("left", pattern="^(left|right|up|down)$")
+    easing: str = Field("inout", pattern="^(" + "|".join(tr.EASINGS) + ")$")
+    from_a: float = Field(0.5, ge=0, le=10)
+    from_b: float = Field(0.5, ge=0, le=10)
+    preview: bool = False
+
+
+def _run_transition(job_id: str, req: TransReq, run_id: str):
+    d = jobdir(job_id)
+    st = load(job_id)
+    out = ("prev_" if req.preview else "final_") + run_id + ".mp4"
+
+    def step(text: str):
+        mutate(job_id, lambda s: s["trans"].update(step=text) if s.get("trans", {}).get("id") == run_id else None)
+    try:
+        info = tr.make(d / st["clips"][0]["name"], d / st["clips"][1]["name"], d / out, req.kind, req.direction,
+                       req.easing, req.from_a, req.from_b, req.preview, step)
+        done = {"status": "done", "name": out, "info": info, "step": ""}
+    except pl.PipelineError as e:
+        (d / out).unlink(missing_ok=True)
+        done = {"status": "error", "error": str(e), "step": ""}
+    except Exception as e:  # noqa: BLE001 - never leave the page waiting forever
+        (d / out).unlink(missing_ok=True)
+        done = {"status": "error", "error": f"שגיאה לא צפויה: {e}", "step": ""}
+    mutate(job_id, lambda s: s["trans"].update(done) if s.get("trans", {}).get("id") == run_id else None)
+
+
+@app.post("/api/jobs/{job_id}/transition", dependencies=[Depends(require_auth)])
+def start_transition(job_id: str, req: TransReq):
+    """Runs in the background (it can take a minute or more); the page polls the job for the result."""
+    st = load(job_id)
+    if st.get("kind") != "trans" or len(st.get("clips", [])) != 2:
+        raise HTTPException(404)
+    if st.get("trans", {}).get("status") == "working":
+        raise HTTPException(409, "מעבר קודם עדיין בעיבוד")
+    d = jobdir(job_id)
+    for old in d.glob("prev_*.mp4"):  # previews are throwaway
+        old.unlink(missing_ok=True)
+    run_id = uuid.uuid4().hex[:8]
+    mutate(job_id, trans={"id": run_id, "status": "working", "step": "מתחיל", "preview": req.preview,
+                          "settings": req.model_dump()})
+    pool.submit(_run_transition, job_id, req, run_id)
+    return {"id": run_id}
+
+
 @app.post("/api/jobs/{job_id}/subs", dependencies=[Depends(require_auth)])
 def replace_subs(job_id: str, subs: UploadFile = File(...)):
     """Swap in a corrected subtitle file; finished videos can then be re-burned without generating again."""
@@ -676,7 +748,7 @@ def replace_subs(job_id: str, subs: UploadFile = File(...)):
 
 class RecordReq(BaseModel):
     name: str
-    kind: str = Field(pattern="^(blessing|talk|frames|refs|text|image)$")
+    kind: str = Field(pattern="^(blessing|talk|frames|refs|text|image|trans)$")
     title: str = Field("", max_length=300)
     model: str = Field("", max_length=120)
     label: str = Field("", max_length=200)
@@ -708,7 +780,7 @@ def record_output(job_id: str, req: RecordReq):
     return {**entry, "job": job_id}
 
 
-KIND_OF_JOB = {"talk": "talk", "frames": "frames", "refs": "refs", "text": "text", "image": "image"}  # anything else came from the main page
+KIND_OF_JOB = {"talk": "talk", "frames": "frames", "refs": "refs", "text": "text", "image": "image", "trans": "trans"}  # anything else came from the main page
 
 
 def _untracked(d: Path, st: dict) -> list[dict]:
@@ -944,6 +1016,9 @@ def mark_interrupted():
         if st.get("status") in ("queued", "analyzing"):
             st.update(status="error", error="העיבוד הופסק (השרת הופעל מחדש). העלה את הסרטון שוב.")
             p.write_text(json.dumps(st, ensure_ascii=False), "utf-8")
+        if st.get("trans", {}).get("status") == "working":
+            st["trans"].update(status="error", error="העיבוד הופסק (השרת הופעל מחדש). נסה שוב.", step="")
+            p.write_text(json.dumps(st, ensure_ascii=False), "utf-8")
 
 
 @app.on_event("startup")
@@ -1002,6 +1077,11 @@ def text_page():
 @app.get("/image", dependencies=[Depends(require_auth)])
 def image_page():
     return _page("image.html")
+
+
+@app.get("/transition", dependencies=[Depends(require_auth)])
+def transition_page():
+    return _page("transition.html")
 
 
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
